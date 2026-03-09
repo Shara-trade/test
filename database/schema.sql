@@ -16,27 +16,28 @@ CREATE TABLE IF NOT EXISTS users (
  prestige INTEGER DEFAULT0,
  tech_tokens INTEGER DEFAULT0,
  
- -- Ресурсы
- metal INTEGER DEFAULT0,
- crystals INTEGER DEFAULT0,
- dark_matter INTEGER DEFAULT0,
- energy INTEGER DEFAULT1000,
- max_energy INTEGER DEFAULT1000,
- credits INTEGER DEFAULT0,
- quantum_tokens INTEGER DEFAULT0,
+-- Ресурсы
+ metal INTEGER DEFAULT 0,
+ crystals INTEGER DEFAULT 0,
+ dark_matter INTEGER DEFAULT 0,
+ energy INTEGER DEFAULT 1000,
+ max_energy INTEGER DEFAULT 1000,
+ credits INTEGER DEFAULT 0,
+ quantum_tokens INTEGER DEFAULT 0,
  
  -- Состояние
  current_system TEXT DEFAULT 'alpha_7',
- heat INTEGER DEFAULT0,
- total_clicks INTEGER DEFAULT0,
- total_mined INTEGER DEFAULT0,
+ heat INTEGER DEFAULT 0,
+ total_clicks INTEGER DEFAULT 0,
+ total_mined INTEGER DEFAULT 0,
  
  -- Служебные
  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
  last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
  referral_code TEXT UNIQUE,
  referred_by INTEGER DEFAULT NULL REFERENCES users(user_id),
- is_banned INTEGER DEFAULT0
+ is_banned INTEGER DEFAULT 0,
+ is_admin INTEGER DEFAULT 0
 );
 
 -- Индексы для users
