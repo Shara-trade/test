@@ -64,18 +64,27 @@ async def register_new_user(message: Message):
 
 
 async def welcome_back_user(message: Message, user: dict):
+    # Защита от None значений
+    level = user.get("level") or 1
+    total_mined = user.get("total_mined") or 0
+    metal = user.get("metal") or 0
+    crystals = user.get("crystals") or 0
+    dark_matter = user.get("dark_matter") or 0
+    energy = user.get("energy") or 0
+    max_energy = user.get("max_energy") or 1000
+
     welcome_text = (
         '🚀 <b>С ВОЗВРАЩЕНИЕМ, ШАХТЁР!</b>\n\n'
         'Ты всё ещё в поясе астероидов. Продолжай добычу!\n\n'
         f'<b>Твой прогресс:</b>\n'
-        f'▸ Уровень: {user.get("level", 1)}\n'
+        f'▸ Уровень: {level}\n'
         f'▸ Дронов: 0/50\n'
-        f'▸ Ресурсов всего: {user.get("total_mined", 0):,}\n\n'
+        f'▸ Ресурсов всего: {total_mined:,}\n\n'
         f'<b>Баланс:</b>\n'
-        f'▸ Металл: {user.get("metal", 0):,}\n'
-        f'▸ Кристаллы: {user.get("crystals", 0):,}\n'
-        f'▸ Тёмная материя: {user.get("dark_matter", 0):,}\n'
-        f'▸ Энергия: {user.get("energy", 1000)}/{user.get("max_energy", 1000)}\n\n'
+        f'▸ Металл: {metal:,}\n'
+        f'▸ Кристаллы: {crystals:,}\n'
+        f'▸ Тёмная материя: {dark_matter:,}\n'
+        f'▸ Энергия: {energy}/{max_energy}\n\n'
         '<b>Куда отправимся?</b>'
     )
 
