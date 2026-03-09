@@ -27,21 +27,40 @@ async def show_profile_screen(message_or_callback, user_id: int, edit: bool = Fa
             await message_or_callback.answer('Ошибка: пользователь не найден')
         return
 
-    level = stats.get('level', 1)
-    experience = stats.get('experience', 0)
-    prestige = stats.get('prestige', 0)
-    tech_tokens = stats.get('tech_tokens', 0)
+    # Безопасное получение значений с защитой от None
+    level = stats.get('level') or 1
+    experience = stats.get('experience') or 0
+    prestige = stats.get('prestige') or 0
+    tech_tokens = stats.get('tech_tokens') or 0
+    username = stats.get('username') or 'Неизвестно'
+    
+    # Ресурсы
+    metal = stats.get('metal') or 0
+    crystals = stats.get('crystals') or 0
+    dark_matter = stats.get('dark_matter') or 0
+    credits = stats.get('credits') or 0
+    quantum_tokens = stats.get('quantum_tokens') or 0
+    
+    # Статистика
+    total_mined = stats.get('total_mined') or 0
+    total_clicks = stats.get('total_clicks') or 0
+    drones_count = stats.get('drones_count') or 0
+    items_count = stats.get('items_count') or 0
+    
+    # Энергия
+    energy = stats.get('energy') or 0
+    max_energy = stats.get('max_energy') or 1000
     
     # Информация об уровне
     level_info = LevelSystem.get_progress_info(level, experience)
     
     # Ранг игрока
-    rank_level = await db.get_user_rank(user_id, "level")
-    rank_mined = await db.get_user_rank(user_id, "mined")
+    rank_level = await db.get_user_rank(user_id, "level") or 0
+    rank_mined = await db.get_user_rank(user_id, "mined") or 0
     
     text = (
         f'👤 <b>ПРОФИЛЬ ИГРОКА</b>\n\n'
-        f"▸ Ник: @{stats.get('username', 'Неизвестно')}\n"
+        f"▸ Ник: @{username}\n"
         f'▸ ID: <code>{user_id}</code>\n\n'
         
         f'📈 <b>ПРОГРЕСС:</b>\n'
@@ -51,24 +70,24 @@ async def show_profile_screen(message_or_callback, user_id: int, edit: bool = Fa
         f'▸ Tech-токены: {tech_tokens}\n\n'
         
         f'📊 <b>СТАТИСТИКА:</b>\n'
-        f"▸ Всего добыто: {stats.get('total_mined', 0):,} ресурсов\n"
-        f"▸ Всего кликов: {stats.get('total_clicks', 0):,}\n"
-        f"▸ Дронов: {stats.get('drones_count', 0)} / 50\n"
-        f"▸ Предметов: {stats.get('items_count', 0)}\n"
+        f"▸ Всего добыто: {total_mined:,} ресурсов\n"
+        f"▸ Всего кликов: {total_clicks:,}\n"
+        f"▸ Дронов: {drones_count} / 50\n"
+        f"▸ Предметов: {items_count}\n"
         f'▸ Ранг по уровню: #{rank_level}\n'
         f'▸ Ранг по добыче: #{rank_mined}\n\n'
         
         f'💰 <b>РЕСУРСЫ:</b>\n'
-        f"▸ Металл: {stats.get('metal', 0):,} ⚙️\n"
-        f"▸ Кристаллы: {stats.get('crystals', 0):,} 💎\n"
-        f"▸ Тёмная материя: {stats.get('dark_matter', 0):,} ⚫\n\n"
+        f"▸ Металл: {metal:,} ⚙️\n"
+        f"▸ Кристаллы: {crystals:,} 💎\n"
+        f"▸ Тёмная материя: {dark_matter:,} ⚫\n\n"
         
         f'💵 <b>ВАЛЮТА:</b>\n'
-        f"▸ Кредиты: {stats.get('credits', 0):,}\n"
-        f"▸ Квант-токены: {stats.get('quantum_tokens', 0)}\n\n"
+        f"▸ Кредиты: {credits:,}\n"
+        f"▸ Квант-токены: {quantum_tokens}\n\n"
         
         f'⚡ <b>ЭНЕРГИЯ:</b>\n'
-        f"▸ {stats.get('energy', 0):,} / {stats.get('max_energy', 1000):,}\n"
+        f"▸ {energy:,} / {max_energy:,}\n"
     )
 
     # Бонусы от уровня
@@ -122,10 +141,10 @@ async def on_achievements(callback: CallbackQuery):
     user_id = callback.from_user.id
     stats = await db.get_user_stats(user_id)
     
-    total_mined = stats.get('total_mined', 0)
-    total_clicks = stats.get('total_clicks', 0)
-    credits = stats.get('credits', 0)
-    items_count = stats.get('items_count', 0)
+    total_mined = stats.get('total_mined') or 0
+    total_clicks = stats.get('total_clicks') or 0
+    credits = stats.get('credits') or 0
+    items_count = stats.get('items_count') or 0
     
     # Проверка достижений
     achievements = [
@@ -178,6 +197,53 @@ async def on_achievements(callback: CallbackQuery):
             text += f'{status} <b>{ach["name"]}</b>\n   {ach["desc"]}\n\n'
         else:
             text += f'{status} <b>{ach["name"]}</b>\n   {ach["desc"]} ({ach["progress"]:,}/{target:,})\n\n'
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='◀️ Назад', callback_data='refresh_profile')]
+    ])
+
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.answer()
+
+
+@router.callback_query(F.data == 'detailed_stats')
+async def on_detailed_stats(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    stats = await db.get_user_stats(user_id)
+    
+    # Безопасное получение значений
+    metal = stats.get('metal') or 0
+    crystals = stats.get('crystals') or 0
+    dark_matter = stats.get('dark_matter') or 0
+    total_mined = stats.get('total_mined') or 0
+    energy = stats.get('energy') or 0
+    max_energy = stats.get('max_energy') or 1000
+    heat = stats.get('heat') or 0
+    drones_count = stats.get('drones_count') or 0
+    drones_income = stats.get('drones_income') or 0
+    items_count = stats.get('items_count') or 0
+    
+    text = (
+        f'📊 <b>ДЕТАЛЬНАЯ СТАТИСТИКА</b>\n\n'
+        
+        f'⛏ <b>ДОБЫЧА:</b>\n'
+        f"▸ Металл: {metal:,}\n"
+        f"▸ Кристаллы: {crystals:,}\n"
+        f"▸ Тёмная материя: {dark_matter:,}\n"
+        f"▸ Всего добыто: {total_mined:,}\n\n"
+        
+        f'⚡ <b>ЭНЕРГИЯ:</b>\n'
+        f"▸ Текущая: {energy:,}\n"
+        f"▸ Максимальная: {max_energy:,}\n"
+        f"▸ Перегрев: {heat}%\n\n"
+        
+        f'🤖 <b>ДРОНЫ:</b>\n'
+        f"▸ Количество: {drones_count}\n"
+        f"▸ Доход/тик: {drones_income:,}\n\n"
+        
+        f'📦 <b>ИНВЕНТАРЬ:</b>\n'
+        f"▸ Предметов: {items_count}\n"
+    )
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='◀️ Назад', callback_data='refresh_profile')]
