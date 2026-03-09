@@ -71,6 +71,8 @@ class LevelSystem:
     @staticmethod
     def get_level_info(level: int) -> LevelInfo:
         """Получить полную информацию об уровне"""
+        level = level or 1  # Защита от None
+        
         exp_needed = LevelSystem.exp_for_level(level)
         exp_total = LevelSystem.total_exp_for_level(level)
         energy_bonus = (level - 1) * LevelSystem.ENERGY_PER_LEVEL
@@ -95,11 +97,13 @@ class LevelSystem:
     @staticmethod
     def get_mining_bonus(level: int) -> float:
         """Получить бонус к добыче за уровень"""
+        level = level or 1  # Защита от None
         return 1.0 + ((level - 1) * LevelSystem.MINING_BONUS_PER_LEVEL)
     
     @staticmethod
     def get_max_energy_bonus(level: int) -> int:
         """Получить бонус к макс. энергии за уровень"""
+        level = level or 1  # Защита от None
         return (level - 1) * LevelSystem.ENERGY_PER_LEVEL
     
     @staticmethod
@@ -120,6 +124,9 @@ class LevelSystem:
     @staticmethod
     def format_exp_bar(current_exp: int, exp_needed: int, width: int = 10) -> str:
         """Форматировать полоску опыта"""
+        current_exp = current_exp or 0
+        exp_needed = exp_needed or 1  # Избегаем деления на 0
+        
         percent = min(100, (current_exp / exp_needed) * 100)
         filled = int(percent / (100 / width))
         empty = width - filled
@@ -129,10 +136,14 @@ class LevelSystem:
     @staticmethod
     def get_progress_info(current_level: int, current_exp: int) -> Dict:
         """Получить информацию о прогрессе"""
+        # Значения по умолчанию
+        current_level = current_level or 1
+        current_exp = current_exp or 0
+        
         level_info = LevelSystem.get_level_info(current_level)
         next_level_info = LevelSystem.get_level_info(current_level + 1)
         
-        exp_percent = int((current_exp / level_info.exp_needed) * 100)
+        exp_percent = int((current_exp / level_info.exp_needed) * 100) if level_info.exp_needed > 0 else 0
         exp_bar = LevelSystem.format_exp_bar(current_exp, level_info.exp_needed)
         
         return {
