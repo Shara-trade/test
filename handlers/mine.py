@@ -9,11 +9,10 @@ from keyboards import get_mine_keyboard, get_buy_energy_keyboard
 from core import rate_limiter, click_protector, ActionType
 
 # Игровые системы
-from game import heat_system, LevelSystem
+from game import heat_system, LevelSystem, asteroid_system, loot_system, container_system
 
 router = Router()
 CLICK_ENERGY_COST = 10
-BASE_MINE_AMOUNT = 10
 
 
 @router.message(Command('mine'))
@@ -57,6 +56,9 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
     drones_count = stats.get('drones_count') or 0
     drones_income = stats.get('drones_income') or 0
     
+    # Контейнеры
+    containers_count = await db.get_containers_count(user_id)
+    
     # Бонус от уровня
     mining_bonus = LevelSystem.get_mining_bonus(level)
     
@@ -88,7 +90,7 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
         f'▸ Бонус добычи: +{int((mining_bonus - 1) * 100)}%\n\n'
         f'💥 <b>ШАНС КРИТА:</b> 3%\n'
         f'⭐ <b>ШАНС РЕДКОГО ЛУТА:</b> 5%\n\n'
-        f'📦 <b>КОНТЕЙНЕРОВ ГОТОВО:</b> 0'
+        f'📦 <b>КОНТЕЙНЕРОВ:</b> {containers_count} / 10'
     )
 
     # Уведомление о повышении уровня
@@ -126,133 +128,192 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
 
 @router.callback_query(F.data == 'mine_click')
 async def on_mine_click(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    
-    # Проверка перегрева
-    user = await db.get_user(user_id)
-    if not user:
-        await callback.answer('Ошибка: пользователь не найден')
-        return
+    try:
+        user_id = callback.from_user.id
+        
+        # Проверка перегрева
+        user = await db.get_user(user_id)
+        if not user:
+            await callback.answer('Ошибка: пользователь не найден')
+            return
 
-    heat = user.get('heat') or 0
-    heat_info = heat_system.get_heat_info(heat)
-    
-    if heat_info.is_overheated:
-        await callback.answer(
-            f'🔥 ПЕРЕГРЕВ! Буры остывают {heat_info.cooldown_seconds} сек',
-            show_alert=True
-        )
-        return
-
-    # 8.2.2 Защита от быстрых кликов
-    allowed, status, speed = await click_protector.check_click(user_id)
-    
-    if not allowed:
-        if status == "blocked":
-            remaining = int(speed) if speed else 60
+        heat = user.get('heat') or 0
+        heat_info = heat_system.get_heat_info(heat)
+        
+        if heat_info.is_overheated:
             await callback.answer(
-                f'🚫 Подозрительная активность! Блокировка на {remaining} сек',
+                f'🔥 ПЕРЕГРЕВ! Буры остывают {heat_info.cooldown_seconds} сек',
                 show_alert=True
             )
-        return
-    
-    # 8.2.3 Проверка лимита кликов
-    allowed, error_msg = await rate_limiter.check_action(user_id, ActionType.CLICK)
-    
-    if not allowed:
-        await callback.answer(error_msg, show_alert=True)
-        return
-    
-    # Записываем клик в трекер
-    click_interval = heat_system.record_click(user_id)
-    
-    # Записываем действие в лимитер
-    await rate_limiter.record_action(user_id, ActionType.CLICK)
+            return
 
-    current_energy = user.get('energy') or 1000
-
-    if current_energy < CLICK_ENERGY_COST:
-        await callback.answer(
-            '❌ Недостаточно энергии! Купите энергию или подождите',
-            show_alert=True
-        )
-        return
-
-    # === РАСЧЁТ ДОБЫЧИ ===
-    level = user.get('level') or 1
-    
-    # Базовая добыча
-    base_mine = BASE_MINE_AMOUNT
-    
-    # Бонус от уровня
-    level_bonus = LevelSystem.get_mining_bonus(level)
-    
-    # Бонус от перегрева
-    heat_bonus = heat_info.bonus_multiplier
-    
-    # Итоговый множитель
-    total_multiplier = level_bonus * heat_bonus
-    
-    # Крит-система
-    crit_chance = 0.03
-    is_crit = random.random() < crit_chance
-    crit_multiplier = 1
-
-    if is_crit:
-        crit_roll = random.random()
-        if crit_roll < 0.7:
-            crit_multiplier = 2
-            crit_text = '💥 КРИТ x2!'
-        elif crit_roll < 0.9:
-            crit_multiplier = 5
-            crit_text = '🔥 МЕГА-КРИТ x5!'
-        else:
-            crit_multiplier = 10
-            crit_text = '⚡ УЛЬТРА-КРИТ x10!'
+        # 8.2.2 Защита от быстрых кликов
+        allowed, status, speed = await click_protector.check_click(user_id)
         
-        await callback.answer(crit_text, show_alert=False)
-    else:
-        # Обычный клик - тихое уведомление
-        pass
+        if not allowed:
+            if status == "blocked":
+                remaining = int(speed) if speed else 60
+                await callback.answer(
+                    f'🚫 Подозрительная активность! Блокировка на {remaining} сек',
+                    show_alert=True
+                )
+            return
+        
+        # 8.2.3 Проверка лимита кликов
+        allowed, error_msg = await rate_limiter.check_action(user_id, ActionType.CLICK)
+        
+        if not allowed:
+            await callback.answer(error_msg, show_alert=True)
+            return
+        
+        # Записываем клик в трекер
+        click_interval = heat_system.record_click(user_id)
+        
+        # Записываем действие в лимитер
+        await rate_limiter.record_action(user_id, ActionType.CLICK)
 
-    # Расчёт добычи
-    final_multiplier = total_multiplier * crit_multiplier
-    metal_gain = int(base_mine * final_multiplier * random.uniform(0.9, 1.1))
-    crystal_gain = int(metal_gain * 0.1 * random.uniform(0.5, 1.5))
-    dark_matter_gain = 1 if random.random() < 0.01 else 0
-    
-    # Опыт за клик
-    exp_gain = LevelSystem.calculate_exp_reward("click", 1)
-    
-    # Расчёт перегрева
-    heat_gain = heat_system.get_click_heat_increase(user_id, click_interval)
-    
-    # === ОБНОВЛЕНИЕ БД ===
-    new_energy = current_energy - CLICK_ENERGY_COST
-    
-    # Обновляем ресурсы
-    await db.update_user_resources(
-        user_id,
-        metal=metal_gain,
-        crystals=crystal_gain,
-        dark_matter=dark_matter_gain,
-        energy=-CLICK_ENERGY_COST,
-        total_clicks=1,
-        total_mined=metal_gain + crystal_gain
-    )
+        current_energy = user.get('energy') or 1000
 
-    # Добавляем опыт и проверяем уровень
-    level_result = await db.add_experience(user_id, exp_gain)
-    
-    # Обновляем перегрев
-    await db.update_heat(user_id, heat_gain)
-    
-    # Обновляем активность
-    await db.update_last_activity(user_id)
-    
-    # Показываем экран с учётом повышения уровня
-    level_up_info = level_result if level_result.get('levels_gained', 0) > 0 else None
-    await show_mine_screen(callback.message, user_id, edit=True, level_up_info=level_up_info)
+        if current_energy < CLICK_ENERGY_COST:
+            await callback.answer(
+                '❌ Недостаточно энергии! Купите энергию или подождите',
+                show_alert=True
+            )
+            return
+
+        # === ГЕНЕРАЦИЯ АСТЕРОИДА ===
+        asteroid = asteroid_system.generate_asteroid()
+        
+        # === РАСЧЁТ БОНУСОВ ===
+        level = user.get('level') or 1
+        level_bonus = LevelSystem.get_mining_bonus(level)
+        heat_bonus = heat_info.bonus_multiplier
+        
+        # === КРИТ-СИСТЕМА ===
+        crit_chance = 0.03  # 3% базовый шанс
+        is_crit = random.random() < crit_chance
+        crit_multiplier = 1
+        crit_text = ""
+
+        if is_crit:
+            crit_roll = random.random()
+            if crit_roll < 0.7:
+                crit_multiplier = 2
+                crit_text = "💥 КРИТ x2!"
+            elif crit_roll < 0.9:
+                crit_multiplier = 5
+                crit_text = "🔥 МЕГА-КРИТ x5!"
+            else:
+                crit_multiplier = 10
+                crit_text = "⚡ УЛЬТРА-КРИТ x10!"
+
+        # === РАСЧЁТ НАГРАД ===
+        total_bonus = level_bonus * heat_bonus
+        rewards = asteroid_system.get_asteroid_rewards(asteroid, total_bonus)
+        
+        metal_gain = rewards["metal"] * crit_multiplier
+        crystal_gain = rewards["crystals"] * crit_multiplier
+        dark_matter_gain = rewards["dark_matter"] * crit_multiplier
+        
+        # Опыт за клик
+        exp_gain = int(LevelSystem.calculate_exp_reward("click", 1) * rewards["exp_bonus"])
+        
+        # Перегрев
+        heat_gain = heat_system.get_click_heat_increase(user_id, click_interval)
+        
+        # === ПРОВЕРКА ЛУТА ===
+        loot_item = loot_system.try_drop()
+        loot_text = ""
+        
+        if loot_item:
+            loot_text = f"\n{loot_system.format_loot_message(loot_item)}"
+            # Добавляем предмет в инвентарь
+            await db.add_inventory_item(user_id, loot_item.key, 1)
+        
+        # === ПРОВЕРКА КОНТЕЙНЕРА ===
+        container_info = container_system.try_drop_container()
+        container_text = ""
+        
+        if container_info:
+            # Проверяем лимит контейнеров
+            containers_count = await db.get_containers_count(user_id)
+            if container_system.can_receive_container(containers_count):
+                container_text = f"\n{container_system.format_container_drop(container_info)}"
+                # Добавляем контейнер
+                await db.add_container(user_id, container_info.container_type.value)
+        
+        # === ФОРМИРОВАНИЕ СООБЩЕНИЯ ===
+        result_lines = []
+        
+        # Тип астероида
+        if is_crit:
+            result_lines.append(f"{crit_text} {asteroid.emoji} {asteroid.name}!")
+        else:
+            result_lines.append(f"{asteroid.emoji} {asteroid.name} астероид!")
+        
+        # Ресурсы
+        resource_parts = []
+        if metal_gain > 0:
+            resource_parts.append(f"+{metal_gain:,} металла")
+        if crystal_gain > 0:
+            resource_parts.append(f"+{crystal_gain:,} кристаллов")
+        if dark_matter_gain > 0:
+            resource_parts.append(f"+{dark_matter_gain:,} тёмной материи")
+        
+        if resource_parts:
+            result_lines.append(" | ".join(resource_parts))
+        
+        # Бонус от перегрева
+        if heat_bonus > 1.0:
+            result_lines.append(f"⚡ Бонус: x{heat_bonus:.1f}")
+        
+        # Лут и контейнер
+        if loot_text:
+            result_lines.append(loot_text.strip())
+        if container_text:
+            result_lines.append(container_text.strip())
+        
+        popup_text = "\n".join(result_lines)
+        
+        # Ограничиваем длину popup (Telegram limit ~200 chars)
+        if len(popup_text) > 200:
+            popup_text = popup_text[:197] + "..."
+        
+        # === ОБНОВЛЕНИЕ БД ===
+        await db.update_user_resources(
+            user_id,
+            metal=metal_gain,
+            crystals=crystal_gain,
+            dark_matter=dark_matter_gain,
+            energy=-CLICK_ENERGY_COST,
+            total_clicks=1,
+            total_mined=metal_gain + crystal_gain
+        )
+
+        # Добавляем опыт
+        level_result = await db.add_experience(user_id, exp_gain)
+        
+        # Обновляем перегрев
+        await db.update_heat(user_id, heat_gain)
+        
+        # Обновляем активность
+        await db.update_last_activity(user_id)
+        
+        # Показываем результат
+        try:
+            await callback.answer(popup_text, show_alert=False)
+        except Exception as e:
+            # Если текст слишком длинный, показываем короткий
+            await callback.answer(f"{asteroid.emoji} {asteroid.name}!", show_alert=False)
+        
+        # Обновляем экран
+        level_up_info = level_result if level_result.get('levels_gained', 0) > 0 else None
+        await show_mine_screen(callback.message, user_id, edit=True, level_up_info=level_up_info)
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Mine click error: {e}")
+        await callback.answer(f"Ошибка: {str(e)[:50]}", show_alert=True)
 
 
 @router.callback_query(F.data == 'refresh_mine')
