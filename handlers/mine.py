@@ -34,14 +34,18 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
     # Получаем статистику
     stats = await db.get_user_stats(user_id)
     
-    energy = user.get('energy', 1000)
-    max_energy = user.get('max_energy', 1000)
-    heat = user.get('heat', 0)
-    level = user.get('level', 1)
-    experience = user.get('experience', 0)
+    # Безопасное получение значений
+    energy = user.get('energy') or 1000
+    max_energy = user.get('max_energy') or 1000
+    heat = user.get('heat') or 0
+    level = user.get('level') or 1
+    experience = user.get('experience') or 0
+    metal = user.get('metal') or 0
+    crystals = user.get('crystals') or 0
+    dark_matter = user.get('dark_matter') or 0
     
     # Расчёты
-    energy_percent = int((energy / max_energy) * 100)
+    energy_percent = int((energy / max_energy) * 100) if max_energy > 0 else 0
     energy_bar = '█' * (energy_percent // 10) + '░' * (10 - energy_percent // 10)
 
     heat_info = heat_system.get_heat_info(heat)
@@ -50,8 +54,8 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
     level_info = LevelSystem.get_progress_info(level, experience)
     
     # Информация о дронах
-    drones_count = stats.get('drones_count', 0)
-    drones_income = stats.get('drones_income', 0)
+    drones_count = stats.get('drones_count') or 0
+    drones_income = stats.get('drones_income') or 0
     
     # Бонус от уровня
     mining_bonus = LevelSystem.get_mining_bonus(level)
@@ -61,9 +65,9 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
         f'Система: Солнечная\n'
         f'Активность: Высокая\n\n'
         f'📊 <b>РЕСУРСЫ В ТРЮМЕ:</b>\n'
-        f'▸ Металл: {user.get("metal", 0):,} ⚙️\n'
-        f'▸ Кристаллы: {user.get("crystals", 0):,} 💎\n'
-        f'▸ Тёмная материя: {user.get("dark_matter", 0):,} ⚫\n\n'
+        f'▸ Металл: {metal:,} ⚙️\n'
+        f'▸ Кристаллы: {crystals:,} 💎\n'
+        f'▸ Тёмная материя: {dark_matter:,} ⚫\n\n'
         f'⚡ <b>ЭНЕРГИЯ БУРОВ:</b>\n'
         f'▸ {energy:,} / {max_energy:,} ⚡ [{energy_bar}] {energy_percent}%\n\n'
         f'🤖 <b>АКТИВНЫЕ ДРОНЫ:</b> {drones_count} / 50\n'
@@ -130,7 +134,7 @@ async def on_mine_click(callback: CallbackQuery):
         await callback.answer('Ошибка: пользователь не найден')
         return
 
-    heat = user.get('heat', 0)
+    heat = user.get('heat') or 0
     heat_info = heat_system.get_heat_info(heat)
     
     if heat_info.is_overheated:
@@ -165,7 +169,7 @@ async def on_mine_click(callback: CallbackQuery):
     # Записываем действие в лимитер
     await rate_limiter.record_action(user_id, ActionType.CLICK)
 
-    current_energy = user.get('energy', 1000)
+    current_energy = user.get('energy') or 1000
 
     if current_energy < CLICK_ENERGY_COST:
         await callback.answer(
@@ -175,7 +179,7 @@ async def on_mine_click(callback: CallbackQuery):
         return
 
     # === РАСЧЁТ ДОБЫЧИ ===
-    level = user.get('level', 1)
+    level = user.get('level') or 1
     
     # Базовая добыча
     base_mine = BASE_MINE_AMOUNT
@@ -260,7 +264,7 @@ async def on_refresh_mine(callback: CallbackQuery):
 @router.callback_query(F.data == 'buy_energy')
 async def on_buy_energy(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
-    metal = user.get('metal', 0)
+    metal = user.get('metal') or 0
 
     text = (
         f'⚡ <b>ВОСПОЛНИТЬ ЭНЕРГИЮ</b>\n\n'
@@ -292,9 +296,9 @@ async def on_buy_energy_amount(callback: CallbackQuery):
     price = prices.get(amount, 50)
 
     user = await db.get_user(callback.from_user.id)
-    current_metal = user.get('metal', 0)
-    current_energy = user.get('energy', 1000)
-    max_energy = user.get('max_energy', 1000)
+    current_metal = user.get('metal') or 0
+    current_energy = user.get('energy') or 0
+    max_energy = user.get('max_energy') or 1000
 
     if current_metal < price:
         await callback.answer('Недостаточно металла!', show_alert=True)
