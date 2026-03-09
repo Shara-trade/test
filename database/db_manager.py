@@ -18,7 +18,8 @@ class DatabaseManager:
                 await db.executescript(f.read())
             await db.commit()
 
-    async def get_user(self, user_id: int) -> Optional[User]:
+    async def get_user(self, user_id: int) -> Optional[Dict]:
+        """Получить пользователя как словарь"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
@@ -29,7 +30,7 @@ class DatabaseManager:
                     data = dict(row)
                     data["is_banned"] = bool(data.get("is_banned", 0))
                     data["is_admin"] = bool(data.get("is_admin", 0))
-                    return User(**data)
+                    return data
                 return None
 
     async def create_user(self, user_id: int, username: str = None,
@@ -47,23 +48,25 @@ class DatabaseManager:
                 print(f"Error: {e}")
                 return False
 
-    async def get_drones(self, user_id: int) -> List[Drone]:
+    async def get_drones(self, user_id: int) -> List[Dict]:
+        """Получить дроны пользователя как список словарей"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT * FROM drones WHERE user_id = ?", (user_id,)
             ) as cursor:
                 rows = await cursor.fetchall()
-                return [Drone(**dict(r)) for r in rows]
+                return [dict(r) for r in rows]
 
-    async def get_item(self, item_key: str) -> Optional[Item]:
+    async def get_item(self, item_key: str) -> Optional[Dict]:
+        """Получить предмет как словарь"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT * FROM items WHERE item_key = ?", (item_key,)
             ) as cursor:
                 row = await cursor.fetchone()
-                return Item(**dict(row)) if row else None
+                return dict(row) if row else None
 
     # ==================== РЕСУРСЫ И СТАТИСТИКА ====================
 
