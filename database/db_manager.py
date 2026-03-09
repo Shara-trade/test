@@ -272,5 +272,118 @@ class DatabaseManager:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
 
+    # ==================== ИНВЕНТАРЬ ====================
+
+    async def add_inventory_item(self, user_id: int, item_key: str, quantity: int = 1) -> bool:
+        """Добавить предмет в инвентарь"""
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                # Проверяем, есть ли уже такой предмет
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT item_id, quantity FROM inventory WHERE user_id = ? AND item_key = ?",
+                    (user_id, item_key)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                
+                if row:
+                    # Увеличиваем количество
+                    await db.execute(
+                        "UPDATE inventory SET quantity = quantity + ? WHERE item_id = ?",
+                        (quantity, row["item_id"])
+                    )
+                else:
+                    # Добавляем новый предмет
+                    await db.execute(
+                        "INSERT INTO inventory (user_id, item_key, quantity) VALUES (?, ?, ?)",
+                        (user_id, item_key, quantity)
+                    )
+                
+                await db.commit()
+                return True
+            except Exception as e:
+                print(f"Error adding inventory item: {e}")
+                return False
+
+    async def get_inventory(self, user_id: int) -> List[Dict]:
+        """Получить инвентарь пользователя"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """SELECT i.item_id, i.item_key, i.quantity, 
+                          COALESCE(it.name, i.item_key) as name,
+                          COALESCE(it.rarity, 'common') as rarity,
+                          COALESCE(it.icon, '📦') as icon
+                   FROM inventory i 
+                   LEFT JOIN items it ON i.item_key = it.item_key 
+                   WHERE i.user_id = ? AND i.quantity > 0
+                   ORDER BY 
+                   CASE COALESCE(it.rarity, 'common')
+                       WHEN 'legendary' THEN 1
+                       WHEN 'epic' THEN 2
+                       WHEN 'rare' THEN 3
+                       ELSE 4
+                   END""",
+                (user_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    # ==================== КОНТЕЙНЕРЫ ====================
+
+    async def add_container(self, user_id: int, container_type: str) -> Dict:
+        """Добавить контейнер пользователю"""
+        from datetime import datetime, timedelta
+        from game import container_system
+        
+        container_info = container_system.get_container_by_type(container_type)
+        if not container_info:
+            return {"success": False, "error": "Unknown container type"}
+        
+        unlock_time = datetime.now() + timedelta(minutes=container_info.unlock_minutes)
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                cursor = await db.execute(
+                    """INSERT INTO containers (user_id, container_type, status, unlock_time)
+                       VALUES (?, ?, 'locked', ?)""",
+                    (user_id, container_type, unlock_time.isoformat())
+                )
+                await db.commit()
+                
+                return {
+                    "success": True,
+                    "container_id": cursor.lastrowid,
+                    "container_type": container_type,
+                    "unlock_time": unlock_time.isoformat()
+                }
+            except Exception as e:
+                print(f"Error adding container: {e}")
+                return {"success": False, "error": str(e)}
+
+    async def get_user_containers(self, user_id: int) -> List[Dict]:
+        """Получить контейнеры пользователя"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """SELECT container_id, container_type, status, unlock_time, created_at
+                   FROM containers 
+                   WHERE user_id = ? AND status != 'opened'
+                   ORDER BY unlock_time ASC""",
+                (user_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_containers_count(self, user_id: int) -> int:
+        """Получить количество контейнеров пользователя"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM containers WHERE user_id = ? AND status != 'opened'",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
+
 
 db_manager = DatabaseManager()
