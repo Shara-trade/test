@@ -931,5 +931,245 @@ class DatabaseManager:
             await db.commit()
             return cursor.rowcount
 
+    # ==================== МОДУЛИ ====================
+
+    async def get_installed_modules(self, user_id: int, target: str = 'player') -> List[Dict]:
+        """Получить установленные модули"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            if target == 'player':
+                query = "installed_in = 'player'"
+                params = (user_id,)
+            else:
+                query = "installed_in = ?"
+                params = (user_id, target)
+            
+            sql = """SELECT 
+                    um.id,
+                    um.item_key,
+                    um.installed_in,
+                    um.slot_number,
+                    um.installed_at,
+                    COALESCE(it.name, um.item_key) as name,
+                    COALESCE(it.description, '') as description,
+                    COALESCE(it.rarity, 'common') as rarity,
+                    COALESCE(it.icon, '⚙️') as icon,
+                    COALESCE(it.effects, '{}') as effects,
+                    COALESCE(it.level_required, 1) as level_required
+                   FROM user_modules um
+                   LEFT JOIN items it ON um.item_key = it.item_key
+                   WHERE um.user_id = ? AND """ + query + """
+                   ORDER BY um.slot_number"""
+            
+            async with db.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_available_modules(self, user_id: int) -> List[Dict]:
+        """Получить модули в инвентаре (не установленные)"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            # Модули из инвентаря, которые не установлены
+            async with db.execute(
+                """SELECT 
+                    i.item_id,
+                    i.item_key,
+                    i.quantity,
+                    COALESCE(it.name, i.item_key) as name,
+                    COALESCE(it.description, '') as description,
+                    COALESCE(it.rarity, 'common') as rarity,
+                    COALESCE(it.icon, '⚙️') as icon,
+                    COALESCE(it.effects, '{}') as effects,
+                    COALESCE(it.level_required, 1) as level_required,
+                    COALESCE(it.base_price, 0) as base_price
+                   FROM inventory i
+                   LEFT JOIN items it ON i.item_key = it.item_key
+                   LEFT JOIN user_modules um ON i.item_key = um.item_key AND um.user_id = i.user_id
+                   WHERE i.user_id = ? 
+                   AND it.item_type = 'module'
+                   AND um.id IS NULL
+                   AND i.quantity > 0
+                   ORDER BY 
+                   CASE COALESCE(it.rarity, 'common')
+                       WHEN 'legendary' THEN 1
+                       WHEN 'epic' THEN 2
+                       WHEN 'rare' THEN 3
+                       ELSE 4
+                   END""",
+                (user_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def install_module(self, user_id: int, item_key: str, target: str = 'player', slot: int = 1) -> Dict:
+        """Установить модуль"""
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                # Проверяем, есть ли модуль в инвентаре
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT item_id, quantity FROM inventory WHERE user_id = ? AND item_key = ?",
+                    (user_id, item_key)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                
+                if not row:
+                    return {"success": False, "error": "Module not in inventory"}
+                
+                # Проверяем, не установлен ли уже
+                async with db.execute(
+                    "SELECT id FROM user_modules WHERE user_id = ? AND item_key = ?",
+                    (user_id, item_key)
+                ) as cursor:
+                    if await cursor.fetchone():
+                        return {"success": False, "error": "Module already installed"}
+                
+                # Проверяем, занят ли слот
+                async with db.execute(
+                    "SELECT id FROM user_modules WHERE user_id = ? AND installed_in = ? AND slot_number = ?",
+                    (user_id, target, slot)
+                ) as cursor:
+                    if await cursor.fetchone():
+                        return {"success": False, "error": "Slot already occupied"}
+                
+                # Устанавливаем модуль
+                await db.execute(
+                    "INSERT INTO user_modules (user_id, item_key, installed_in, slot_number) VALUES (?, ?, ?, ?)",
+                    (user_id, item_key, target, slot)
+                )
+                
+                await db.commit()
+                
+                return {
+                    "success": True,
+                    "item_key": item_key,
+                    "installed_in": target,
+                    "slot": slot
+                }
+                
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+    async def uninstall_module(self, user_id: int, item_key: str) -> Dict:
+        """Снять модуль"""
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                # Получаем информацию о модуле
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT * FROM user_modules WHERE user_id = ? AND item_key = ?",
+                    (user_id, item_key)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                
+                if not row:
+                    return {"success": False, "error": "Module not installed"}
+                
+                # Удаляем запись
+                await db.execute(
+                    "DELETE FROM user_modules WHERE user_id = ? AND item_key = ?",
+                    (user_id, item_key)
+                )
+                
+                await db.commit()
+                
+                return {
+                    "success": True,
+                    "item_key": item_key,
+                    "was_installed_in": row["installed_in"]
+                }
+                
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+    async def get_module_bonuses(self, user_id: int, target: str = None) -> Dict:
+        """Получить общие бонусы от модулей"""
+        import json
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            if target:
+                sql = """SELECT effects 
+                   FROM user_modules um
+                   LEFT JOIN items it ON um.item_key = it.item_key
+                   WHERE um.user_id = ? AND installed_in = ?"""
+                params = (user_id, target)
+            else:
+                sql = """SELECT effects 
+                   FROM user_modules um
+                   LEFT JOIN items it ON um.item_key = it.item_key
+                   WHERE um.user_id = ?"""
+                params = (user_id,)
+            
+            async with db.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+            
+            # Суммируем бонусы
+            total_bonuses = {}
+            
+            for row in rows:
+                effects = row["effects"] or '{}'
+                try:
+                    effects_dict = json.loads(effects) if isinstance(effects, str) else effects
+                    
+                    for key, value in effects_dict.items():
+                        if key in total_bonuses:
+                            total_bonuses[key] += value
+                        else:
+                            total_bonuses[key] = value
+                except:
+                    pass
+            
+            return total_bonuses
+
+    async def get_module_slots_info(self, user_id: int) -> Dict:
+        """Получить информацию о слотах модулей"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            # Получаем уровень игрока
+            async with db.execute(
+                "SELECT level FROM users WHERE user_id = ?",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                level = row["level"] if row else 1
+            
+            # Базовые слоты: 3, +1 за каждые 10 уровней, максимум 10
+            base_slots = 3
+            bonus_slots = min(7, level // 10)
+            max_player_slots = base_slots + bonus_slots
+            
+            # Установленные модули на игроке
+            async with db.execute(
+                "SELECT COUNT(*) as count FROM user_modules WHERE user_id = ? AND installed_in = 'player'",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                installed_player = row["count"] if row else 0
+            
+            # Модули на дронах
+            async with db.execute(
+                """SELECT d.drone_id, d.drone_type, d.module_slots,
+                          (SELECT COUNT(*) FROM user_modules WHERE installed_in = CAST(d.drone_id AS TEXT)) as installed
+                   FROM drones d WHERE d.user_id = ? AND d.is_active = 1""",
+                (user_id,)
+            ) as cursor:
+                drone_rows = await cursor.fetchall()
+                drones_info = [dict(r) for r in drone_rows]
+            
+            return {
+                "level": level,
+                "player_slots": {
+                    "max": max_player_slots,
+                    "installed": installed_player,
+                    "available": max_player_slots - installed_player
+                },
+                "drones": drones_info
+            }
+
 
 db_manager = DatabaseManager()
