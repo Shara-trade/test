@@ -17,6 +17,10 @@ async def cmd_start(message: Message):
     if user is None:
         await register_new_user(message)
     else:
+        # Исправляем NULL значения если есть
+        if user.get("level") is None or user.get("experience") is None:
+            await db.fix_null_values(message.from_user.id)
+            user = await db.get_user(message.from_user.id)
         await welcome_back_user(message, user)
 
 
