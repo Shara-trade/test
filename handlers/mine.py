@@ -68,11 +68,17 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
     # Контейнеры
     containers_count = await db.get_containers_count(user_id)
     
-    # Проверяем блокировку перегрева
-    block_status = await db.get_heat_block_status(user_id)
+    # Проверяем блокировку перегрева (и сбрасываем если истекла)
+    block_status = await db.check_and_clear_heat_block(user_id)
     is_heat_blocked = block_status.get("is_blocked", False)
     block_remaining = block_status.get("remaining_seconds", 0)
+    was_cleared = block_status.get("was_cleared", False)
     
+    # Если блокировка была только что сброшена - обновляем данные пользователя
+    if was_cleared:
+        user = await db.get_user(user_id)
+        heat = user.get('heat') or 0
+        
     # Бонус от уровня
     mining_bonus = LevelSystem.get_mining_bonus(level)
     
@@ -153,8 +159,8 @@ async def on_mine_click(callback: CallbackQuery):
             await callback.answer('Ошибка: пользователь не найден')
             return
 
-        # Проверка блокировки перегрева
-        block_status = await db.get_heat_block_status(user_id)
+        # Проверка блокировки перегрева (и сброс если истекла)
+        block_status = await db.check_and_clear_heat_block(user_id)
         
         if block_status.get("is_blocked"):
             remaining = block_status.get("remaining_seconds", 60)
@@ -163,6 +169,11 @@ async def on_mine_click(callback: CallbackQuery):
                 show_alert=True
             )
             return
+
+        # Если блокировка только что была сброшена
+        if block_status.get("was_cleared"):
+            # Обновляем данные пользователя
+            user = await db.get_user(user_id)
 
         # Проверка перегрева
         heat = user.get('heat') or 0
