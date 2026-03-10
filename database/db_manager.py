@@ -18,6 +18,14 @@ class DatabaseManager:
                 await db.executescript(f.read())
             await db.commit()
 
+            # Миграция: добавляем поле heat_blocked_until если его нет
+            try:
+                await db.execute("ALTER TABLE users ADD COLUMN heat_blocked_until TIMESTAMP DEFAULT NULL")
+                await db.commit()
+                print("Migration: added heat_blocked_until column")
+            except:
+                pass  # Колонка уже существует
+
     async def get_user(self, user_id: int) -> Optional[Dict]:
         """Получить пользователя как словарь"""
         async with aiosqlite.connect(self.db_path) as db:
@@ -192,6 +200,87 @@ class DatabaseManager:
             except Exception as e:
                 print(f"Error updating heat: {e}")
                 return {"success": False}
+
+    async def set_heat_block(self, user_id: int, seconds: int = 60) -> Dict:
+        """Установить блокировку перегрева на N секунд"""
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                from datetime import datetime, timedelta
+                
+                blocked_until = datetime.now() + timedelta(seconds=seconds)
+                
+                await db.execute(
+                    "UPDATE users SET heat = 100, heat_blocked_until = ? WHERE user_id = ?",
+                    (blocked_until.isoformat(), user_id)
+                )
+                await db.commit()
+                
+                return {
+                    "success": True,
+                    "blocked_until": blocked_until.isoformat(),
+                    "duration_seconds": seconds
+                }
+            except Exception as e:
+                print(f"Error setting heat block: {e}")
+                return {"success": False}
+
+    async def get_heat_block_status(self, user_id: int) -> Dict:
+        """Получить статус блокировки перегрева"""
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                from datetime import datetime
+                
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT heat, heat_blocked_until FROM users WHERE user_id = ?", (user_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if not row:
+                        return {"is_blocked": False}
+                
+                blocked_until_str = row["heat_blocked_until"]
+                heat = row["heat"]
+                
+                if not blocked_until_str:
+                    return {"is_blocked": False, "heat": heat}
+                
+                blocked_until = datetime.fromisoformat(blocked_until_str)
+                now = datetime.now()
+                
+                if now < blocked_until:
+                    remaining = int((blocked_until - now).total_seconds())
+                    return {
+                        "is_blocked": True,
+                        "remaining_seconds": remaining,
+                        "blocked_until": blocked_until_str,
+                        "heat": heat
+                    }
+                else:
+                    # Блокировка истекла, очищаем
+                    await db.execute(
+                        "UPDATE users SET heat_blocked_until = NULL WHERE user_id = ?",
+                        (user_id,)
+                    )
+                    await db.commit()
+                    return {"is_blocked": False, "heat": heat}
+                    
+            except Exception as e:
+                print(f"Error getting heat block status: {e}")
+                return {"is_blocked": False}
+
+    async def clear_heat_block(self, user_id: int) -> bool:
+        """Очистить блокировку перегрева"""
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                await db.execute(
+                    "UPDATE users SET heat_blocked_until = NULL WHERE user_id = ?",
+                    (user_id,)
+                )
+                await db.commit()
+                return True
+            except Exception as e:
+                print(f"Error clearing heat block: {e}")
+                return False
 
     async def update_last_activity(self, user_id: int):
         """Обновить время последней активности"""
