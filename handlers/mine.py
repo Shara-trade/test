@@ -23,12 +23,17 @@ async def cmd_mine(message: Message):
 
 async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False, level_up_info: dict = None):
     from aiogram.types import Message
+    import logging
+    logger = logging.getLogger("mine")
 
     user = await db.get_user(user_id)
     if not user:
         if isinstance(message_or_callback, Message):
             await message_or_callback.answer('Ошибка: пользователь не найден')
         return
+
+    # Логируем загруженные данные
+    logger.info(f"show_mine_screen: user={user_id}, level={user.get('level')}, exp={user.get('experience')}")
 
     # Получаем статистику
     stats = await db.get_user_stats(user_id)
@@ -314,7 +319,15 @@ async def on_mine_click(callback: CallbackQuery):
         )
 
         # Добавляем опыт
+        import logging
+        logger = logging.getLogger("mine")
+        logger.info(f"Adding {exp_gain} exp to user {user_id}")
+        
         level_result = await db.add_experience(user_id, exp_gain)
+        logger.info(f"add_experience result: {level_result}")
+        
+        if not level_result.get("success"):
+            logger.error(f"Failed to add experience: {level_result.get('error')}")
         
         # Обновляем перегрев и проверяем блокировку
         heat_result = await db.update_heat(user_id, heat_gain)
