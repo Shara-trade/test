@@ -59,6 +59,11 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
     # Контейнеры
     containers_count = await db.get_containers_count(user_id)
     
+    # Проверяем блокировку перегрева
+    block_status = await db.get_heat_block_status(user_id)
+    is_heat_blocked = block_status.get("is_blocked", False)
+    block_remaining = block_status.get("remaining_seconds", 0)
+    
     # Бонус от уровня
     mining_bonus = LevelSystem.get_mining_bonus(level)
     
@@ -79,8 +84,10 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
     )
 
     # Предупреждение о перегреве
-    if heat_info.is_overheated:
-        text += f'▸ 🔥 <b>ПЕРЕГРЕВ! Остывание {heat_info.cooldown_seconds} сек</b>\n'
+    if is_heat_blocked:
+        text += f'▸ 🔥 <b>ПЕРЕГРЕВ! Блокировка {block_remaining} сек</b>\n'
+    elif heat_info.is_overheated:
+        text += f'▸ 🔥 <b>ПЕРЕГРЕВ! Блокировка 60 сек</b>\n'
     elif heat >= 80:
         text += f'▸ ⚡ Бонус добычи: x{heat_info.bonus_multiplier:.1f}\n'
     
@@ -137,15 +144,27 @@ async def on_mine_click(callback: CallbackQuery):
             await callback.answer('Ошибка: пользователь не найден')
             return
 
-        # Проверка перегрева (строгая проверка >= 100)
+        # Проверка блокировки перегрева
+        block_status = await db.get_heat_block_status(user_id)
+        
+        if block_status.get("is_blocked"):
+            remaining = block_status.get("remaining_seconds", 60)
+            await callback.answer(
+                f'🔥 ПЕРЕГРЕВ! Буры остывают {remaining} сек',
+                show_alert=True
+            )
+            return
+
+        # Проверка перегрева
         heat = user.get('heat') or 0
         
         if heat >= 100:
+            # Устанавливаем блокировку на 60 секунд
+            await db.set_heat_block(user_id, 60)
             await callback.answer(
-                '🔥 ПЕРЕГРЕВ! Буры остывают...',
+                '🔥 ПЕРЕГРЕВ! Буры заблокированы на 60 сек',
                 show_alert=True
             )
-            # Обновляем экран чтобы показать актуальный перегрев
             await show_mine_screen(callback.message, user_id, edit=True)
             return
 
@@ -300,18 +319,20 @@ async def on_mine_click(callback: CallbackQuery):
         # Обновляем перегрев и проверяем блокировку
         heat_result = await db.update_heat(user_id, heat_gain)
         
-        # Если перегрев достиг 100% - показываем уведомление
+        # Если перегрев достиг 100% - устанавливаем блокировку на 60 секунд
         if heat_result.get("is_overheated"):
-            # Добавляем информацию о перегреве в popup
+            await db.set_heat_block(user_id, 60)
+            
+            # Показываем результат + уведомление о блокировке
             try:
                 await callback.answer(
-                    f"{popup_text}\n🔥 ПЕРЕГРЕВ 100%!",
+                    f"{popup_text}\n🔥 ПЕРЕГРЕВ 100%!\nБлокировка 60 сек",
                     show_alert=False
                 )
             except:
-                await callback.answer("🔥 ПЕРЕГРЕВ 100%!", show_alert=False)
+                await callback.answer("🔥 ПЕРЕГРЕВ 100%! Блокировка 60 сек", show_alert=False)
             
-            # Обновляем экран и НЕ даём кликнуть снова
+            # Обновляем экран
             level_up_info = level_result if level_result.get('levels_gained', 0) > 0 else None
             await show_mine_screen(callback.message, user_id, edit=True, level_up_info=level_up_info)
             return
