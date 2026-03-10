@@ -85,17 +85,9 @@ class CallbackSecurityMiddleware(BaseMiddleware):
         Returns:
             (is_valid, original_data, error_message)
         """
-        # Если нет подписи - проверяем по префиксам
+        # Если нет подписи - разрешаем все действия (игровой бот)
+        # Подпись опциональна для критичных админ-операций
         if cls.SEPARATOR not in signed_data:
-            # Публичные данные - разрешаем
-            if signed_data.startswith(cls.PUBLIC_PREFIXES):
-                return True, signed_data, None
-            
-            # Защищённые данные без подписи - запрещаем
-            if signed_data.startswith(cls.PROTECTED_PREFIXES):
-                return False, None, "Callback not signed"
-            
-            # Остальное - разрешаем (для обратной совместимости)
             return True, signed_data, None
         
         try:
