@@ -28,6 +28,9 @@ class DatabaseManager:
 
     async def get_user(self, user_id: int) -> Optional[Dict]:
         """Получить пользователя как словарь"""
+        import logging
+        logger = logging.getLogger("database")
+        
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
@@ -38,7 +41,9 @@ class DatabaseManager:
                     data = dict(row)
                     data["is_banned"] = bool(data.get("is_banned", 0))
                     data["is_admin"] = bool(data.get("is_admin", 0))
+                    logger.debug(f"get_user({user_id}): level={data.get('level')}, exp={data.get('experience')}")
                     return data
+                logger.warning(f"get_user({user_id}): user not found")
                 return None
 
     async def create_user(self, user_id: int, username: str = None,
@@ -104,6 +109,9 @@ class DatabaseManager:
 
     async def add_experience(self, user_id: int, amount: int) -> Dict:
         """Добавить опыт и проверить повышение уровня"""
+        import logging
+        logger = logging.getLogger("database")
+        
         async with aiosqlite.connect(self.db_path) as db:
             try:
                 # Получаем текущие данные
@@ -113,10 +121,13 @@ class DatabaseManager:
                 ) as cursor:
                     row = await cursor.fetchone()
                     if not row:
-                        return {"success": False}
+                        logger.error(f"User {user_id} not found in add_experience")
+                        return {"success": False, "error": "User not found"}
                     
                     current_level = row["level"]
                     current_exp = row["experience"]
+                
+                logger.info(f"Adding {amount} exp to user {user_id}. Current: {current_exp}")
                 
                 # Добавляем опыт
                 new_exp = current_exp + amount
@@ -146,8 +157,11 @@ class DatabaseManager:
                         "UPDATE users SET max_energy = max_energy + ? WHERE user_id = ?",
                         (energy_bonus, user_id)
                     )
+                    logger.info(f"User {user_id} leveled up! New level: {new_level}")
                 
                 await db.commit()
+                
+                logger.info(f"Experience updated for user {user_id}: {current_exp} -> {new_exp}")
                 
                 return {
                     "success": True,
@@ -159,7 +173,9 @@ class DatabaseManager:
                     "exp_needed": self._exp_for_level(new_level)
                 }
             except Exception as e:
-                print(f"Error adding experience: {e}")
+                logger.error(f"Error adding experience for user {user_id}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 return {"success": False, "error": str(e)}
 
     def _exp_for_level(self, level: int) -> int:
