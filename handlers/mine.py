@@ -82,6 +82,18 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
     # Бонус от уровня
     mining_bonus = LevelSystem.get_mining_bonus(level)
     
+    # Расчёт времени восстановления энергии (если мало)
+    energy_regen_text = ""
+    if energy < CLICK_ENERGY_COST:
+        energy_needed = CLICK_ENERGY_COST - energy
+        seconds_until_click = energy_needed * 12  # 60 сек / 5 энергии = 12 сек за 1 энергию
+        minutes = seconds_until_click // 60
+        seconds = seconds_until_click % 60
+        if minutes > 0:
+            energy_regen_text = f" ⏳ {minutes} мин {seconds} сек"
+        else:
+            energy_regen_text = f" ⏳ {seconds} сек"
+    
     text = (
         f'⛏ <b>АСТЕРОИДНЫЙ ПОЯС АЛЬФА-7</b>\n'
         f'Система: Солнечная\n'
@@ -91,7 +103,7 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
         f'▸ Кристаллы: {crystals:,} 💎\n'
         f'▸ Тёмная материя: {dark_matter:,} ⚫\n\n'
         f'⚡ <b>ЭНЕРГИЯ БУРОВ:</b>\n'
-        f'▸ {energy:,} / {max_energy:,} ⚡ [{energy_bar}] {energy_percent}%\n\n'
+        f'▸ {energy:,} / {max_energy:,} ⚡ [{energy_bar}] {energy_percent}%{energy_regen_text}\n\n'
         f'🤖 <b>АКТИВНЫЕ ДРОНЫ:</b> {drones_count} / 50\n'
         f'⏱ <b>ПАССИВНЫЙ ДОХОД:</b> +{drones_income:,}/5 сек\n\n'
         f'🌡 <b>ПЕРЕГРЕВ БУРОВ:</b> {heat}%\n'
@@ -221,14 +233,28 @@ async def on_mine_click(callback: CallbackQuery):
         await rate_limiter.record_action(user_id, ActionType.CLICK)
 
         current_energy = user.get('energy') or 1000
+        max_energy = user.get('max_energy') or 1000
 
         if current_energy < CLICK_ENERGY_COST:
+            # Расчёт времени до восстановления (1 энергия = 12 секунд)
+            energy_needed = CLICK_ENERGY_COST - current_energy
+            seconds_until_click = energy_needed * 12  # 60 сек / 5 энергии = 12 сек за 1 энергию
+            
+            # Форматирование времени
+            minutes = seconds_until_click // 60
+            seconds = seconds_until_click % 60
+            
+            if minutes > 0:
+                time_text = f"{minutes} мин {seconds} сек"
+            else:
+                time_text = f"{seconds} сек"
+            
             await callback.answer(
-                '❌ Недостаточно энергии! Купите энергию или подождите',
+                f'❌ Недостаточно энергии!\nВосстановление через {time_text}',
                 show_alert=True
             )
             return
-
+        
         # === ГЕНЕРАЦИЯ АСТЕРОИДА ===
         asteroid = asteroid_system.generate_asteroid()
         
