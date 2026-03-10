@@ -338,6 +338,97 @@ class DatabaseManager:
                 print(f"Error clearing heat block: {e}")
                 return False
 
+    async def clear_expired_heat_blocks(self) -> int:
+        """
+        Сбросить истёкшие блокировки перегрева.
+        Устанавливает heat = 15 и очищает heat_blocked_until.
+        
+        Returns:
+            Количество сброшенных блокировок
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                from datetime import datetime
+                
+                now = datetime.now().isoformat()
+                
+                # Находим и обновляем пользователей с истёкшей блокировкой
+                cursor = await db.execute("""
+                    UPDATE users 
+                    SET heat = 15, heat_blocked_until = NULL
+                    WHERE heat_blocked_until IS NOT NULL 
+                    AND heat_blocked_until <= ?
+                    AND heat >= 100
+                """, (now,))
+                
+                await db.commit()
+                
+                count = cursor.rowcount
+                if count > 0:
+                    print(f"Cleared {count} expired heat blocks")
+                
+                return count
+            except Exception as e:
+                print(f"Error clearing expired heat blocks: {e}")
+                return 0
+
+    async def check_and_clear_heat_block(self, user_id: int) -> Dict:
+        """
+        Проверить и очистить блокировку перегрева для конкретного пользователя.
+        Если блокировка истекла - сбрасывает heat до 15.
+        
+        Returns:
+            Статус блокировки и была ли она очищена
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                from datetime import datetime
+                
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT heat, heat_blocked_until FROM users WHERE user_id = ?", (user_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if not row:
+                        return {"is_blocked": False, "was_cleared": False}
+                
+                blocked_until_str = row["heat_blocked_until"]
+                heat = row["heat"]
+                
+                if not blocked_until_str:
+                    return {"is_blocked": False, "heat": heat, "was_cleared": False}
+                
+                blocked_until = datetime.fromisoformat(blocked_until_str)
+                now = datetime.now()
+                
+                if now < blocked_until:
+                    remaining = int((blocked_until - now).total_seconds())
+                    return {
+                        "is_blocked": True,
+                        "remaining_seconds": remaining,
+                        "blocked_until": blocked_until_str,
+                        "heat": heat,
+                        "was_cleared": False
+                    }
+                else:
+                    # Блокировка истекла - сбрасываем heat до 15
+                    await db.execute(
+                        "UPDATE users SET heat = 15, heat_blocked_until = NULL WHERE user_id = ?",
+                        (user_id,)
+                    )
+                    await db.commit()
+                
+                    return {
+                        "is_blocked": False,
+                        "heat": 15,
+                        "was_cleared": True,
+                        "old_heat": heat
+                    }
+                    
+            except Exception as e:
+                print(f"Error checking heat block: {e}")
+                return {"is_blocked": False, "was_cleared": False}
+
     async def update_last_activity(self, user_id: int):
         """Обновить время последней активности"""
         async with aiosqlite.connect(self.db_path) as db:
