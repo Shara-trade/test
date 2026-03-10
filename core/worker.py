@@ -198,11 +198,21 @@ class BackgroundWorker:
             import aiosqlite
             
             async with aiosqlite.connect(db.db_path) as conn:
-                # -1 перегрев в секунду для всех с перегревом > 0
+                # Остывает только если НЕТ активной блокировки
+                # -1 перегрев в секунду для всех с перегревом > 0 и без блокировки
                 await conn.execute("""
                     UPDATE users 
                     SET heat = MAX(0, heat - 1)
                     WHERE heat > 0
+                    AND (heat_blocked_until IS NULL OR heat_blocked_until <= datetime('now'))
+                """)
+                
+                # Очищаем истёкшие блокировки
+                await conn.execute("""
+                    UPDATE users 
+                    SET heat_blocked_until = NULL
+                    WHERE heat_blocked_until IS NOT NULL 
+                    AND heat_blocked_until <= datetime('now')
                 """)
                 
                 await conn.commit()
