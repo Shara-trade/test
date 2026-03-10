@@ -665,5 +665,271 @@ class DatabaseManager:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
 
+    # ==================== РАСШИРЕННЫЕ МЕТОДЫ ИНВЕНТАРЯ ====================
+
+    async def get_user_inventory(self, user_id: int) -> List[Dict]:
+        """Получить инвентарь пользователя с полной информацией о предметах"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """SELECT 
+                    i.item_id, 
+                    i.item_key, 
+                    i.quantity,
+                    i.acquired_at,
+                    COALESCE(it.name, i.item_key) as name,
+                    COALESCE(it.description, '') as description,
+                    COALESCE(it.item_type, 'resource') as item_type,
+                    COALESCE(it.rarity, 'common') as rarity,
+                    COALESCE(it.icon, '📦') as icon,
+                    COALESCE(it.max_stack, 999) as max_stack,
+                    COALESCE(it.effects, '{}') as effects,
+                    COALESCE(it.can_sell, 1) as can_sell,
+                    COALESCE(it.base_price, 0) as base_price,
+                    COALESCE(it.level_required, 1) as level_required
+                   FROM inventory i 
+                   LEFT JOIN items it ON i.item_key = it.item_key 
+                   WHERE i.user_id = ? AND i.quantity > 0
+                   ORDER BY 
+                   CASE COALESCE(it.rarity, 'common')
+                       WHEN 'relic' THEN 1
+                       WHEN 'legendary' THEN 2
+                       WHEN 'epic' THEN 3
+                       WHEN 'rare' THEN 4
+                       ELSE 5
+                   END, i.quantity DESC""",
+                (user_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_item_info(self, item_key: str) -> Optional[Dict]:
+        """Получить информацию о предмете из каталога"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM items WHERE item_key = ?",
+                (item_key,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def get_user_item(self, user_id: int, item_key: str) -> Optional[Dict]:
+        """Получить конкретный предмет пользователя с информацией"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """SELECT 
+                    i.item_id, 
+                    i.item_key, 
+                    i.quantity,
+                    i.acquired_at,
+                    COALESCE(it.name, i.item_key) as name,
+                    COALESCE(it.description, '') as description,
+                    COALESCE(it.item_type, 'resource') as item_type,
+                    COALESCE(it.rarity, 'common') as rarity,
+                    COALESCE(it.icon, '📦') as icon,
+                    COALESCE(it.max_stack, 999) as max_stack,
+                    COALESCE(it.effects, '{}') as effects,
+                    COALESCE(it.can_sell, 1) as can_sell,
+                    COALESCE(it.base_price, 0) as base_price,
+                    COALESCE(it.level_required, 1) as level_required
+                   FROM inventory i 
+                   LEFT JOIN items it ON i.item_key = it.item_key 
+                   WHERE i.user_id = ? AND i.item_key = ?""",
+                (user_id, item_key)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def add_item(self, user_id: int, item_key: str, quantity: int = 1) -> bool:
+        """Добавить предмет в инвентарь (алиас для add_inventory_item)"""
+        return await self.add_inventory_item(user_id, item_key, quantity)
+
+    async def remove_item(self, user_id: int, item_key: str, quantity: int = 1) -> bool:
+        """Удалить предмет из инвентаря"""
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                # Получаем текущее количество
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT item_id, quantity FROM inventory WHERE user_id = ? AND item_key = ?",
+                    (user_id, item_key)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                
+                if not row:
+                    return False
+                
+                new_quantity = row["quantity"] - quantity
+                
+                if new_quantity <= 0:
+                    # Удаляем запись
+                    await db.execute(
+                        "DELETE FROM inventory WHERE item_id = ?",
+                        (row["item_id"],)
+                    )
+                else:
+                    # Уменьшаем количество
+                    await db.execute(
+                        "UPDATE inventory SET quantity = ? WHERE item_id = ?",
+                        (new_quantity, row["item_id"])
+                    )
+                
+                await db.commit()
+                return True
+            except Exception as e:
+                print(f"Error removing item: {e}")
+                return False
+
+    async def get_inventory_stats(self, user_id: int) -> Dict:
+        """Получить статистику инвентаря"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            # Общее количество предметов
+            async with db.execute(
+                "SELECT COUNT(*) as count, SUM(quantity) as total FROM inventory WHERE user_id = ?",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                total_items = row["count"] or 0
+                total_quantity = row["total"] or 0
+            
+            # По редкости
+            async with db.execute(
+                """SELECT 
+                    COALESCE(it.rarity, 'common') as rarity,
+                    SUM(i.quantity) as count
+                   FROM inventory i 
+                   LEFT JOIN items it ON i.item_key = it.item_key 
+                   WHERE i.user_id = ?
+                   GROUP BY it.rarity""",
+                (user_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                by_rarity = {row["rarity"]: row["count"] for row in rows}
+            
+            # Общая стоимость
+            async with db.execute(
+                """SELECT SUM(i.quantity * COALESCE(it.base_price, 0)) as total_value
+                   FROM inventory i 
+                   LEFT JOIN items it ON i.item_key = it.item_key 
+                   WHERE i.user_id = ?""",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                total_value = row["total_value"] or 0
+            
+            return {
+                "total_items": total_items,
+                "total_quantity": total_quantity,
+                "by_rarity": by_rarity,
+                "total_value": total_value
+            }
+
+    # ==================== КОНТЕЙНЕРЫ (РАСШИРЕНО) ====================
+
+    async def open_container(self, user_id: int, container_id: int) -> Optional[Dict]:
+        """Открыть контейнер и получить награды"""
+        from datetime import datetime
+        from game import container_system
+        import random
+        import json
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            # Получаем контейнер
+            async with db.execute(
+                "SELECT * FROM containers WHERE container_id = ? AND user_id = ?",
+                (container_id, user_id)
+            ) as cursor:
+                row = await cursor.fetchone()
+            
+            if not row:
+                return None
+            
+            container = dict(row)
+            container_type = container["container_type"]
+            status = container["status"]
+            unlock_time_str = container.get("unlock_time")
+            
+            # Проверяем статус
+            if status == "opened":
+                return None
+            
+            # Проверяем время если locked
+            if status == "locked" and unlock_time_str:
+                try:
+                    unlock_time = datetime.fromisoformat(unlock_time_str)
+                    if datetime.now() < unlock_time:
+                        return {
+                            "success": False,
+                            "error": "not_ready",
+                            "unlock_time": unlock_time_str
+                        }
+                except:
+                    pass
+            
+            # Получаем информацию о контейнере
+            container_info = container_system.get_container_by_type(container_type)
+            if not container_info:
+                return None
+            
+            # Генерируем награды
+            result = container_system.generate_rewards(container_info)
+            rewards = result.get("rewards", [])
+            
+            # Добавляем награды пользователю
+            for reward in rewards:
+                reward_type = reward.get("type")
+                
+                if reward_type == "item":
+                    item_key = reward.get("item_key")
+                    quantity = reward.get("quantity", 1)
+                    await self.add_item(user_id, item_key, quantity)
+                
+                elif reward_type == "resource":
+                    resource = reward.get("resource")
+                    quantity = reward.get("quantity", 0)
+                    if resource in ["metal", "crystals", "dark_matter", "credits", "energy"]:
+                        await self.update_user_resources(user_id, **{resource: quantity})
+            
+            # Помечаем контейнер как открытый
+            await db.execute(
+                "UPDATE containers SET status = 'opened', opened_at = ? WHERE container_id = ?",
+                (datetime.now().isoformat(), container_id)
+            )
+            await db.commit()
+            
+            return {
+                "success": True,
+                "container_id": container_id,
+                "container_type": container_type,
+                "rewards": rewards
+            }
+
+    async def update_container_status(self, user_id: int = None) -> int:
+        """Обновить статус контейнеров (locked -> ready)"""
+        from datetime import datetime
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            now = datetime.now().isoformat()
+            
+            if user_id:
+                cursor = await db.execute(
+                    "UPDATE containers SET status = 'ready' WHERE user_id = ? AND status = 'locked' AND unlock_time <= ?",
+                    (user_id, now)
+                )
+            else:
+                cursor = await db.execute(
+                    "UPDATE containers SET status = 'ready' WHERE status = 'locked' AND unlock_time <= ?",
+                    (now,)
+                )
+            
+            await db.commit()
+            return cursor.rowcount
+
 
 db_manager = DatabaseManager()
