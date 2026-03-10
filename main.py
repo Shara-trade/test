@@ -10,7 +10,7 @@ from aiogram.client.default import DefaultBotProperties
 from config import BOT_TOKEN, BOT_COMMANDS
 from database import db
 from handlers import start, mine, drones, profile, top, help, admin
-from handlers import inventory, market, craft, clan, galaxy
+from handlers import inventory, market, craft, clan, galaxy, modules
 
 # Core модули (8. Технические требования)
 from core import cache, worker
@@ -54,6 +54,7 @@ async def main():
     dp.include_router(top.router)
     dp.include_router(help.router)
     dp.include_router(inventory.router)
+    dp.include_router(modules.router)
     dp.include_router(market.router)
     dp.include_router(craft.router)
     dp.include_router(clan.router)
