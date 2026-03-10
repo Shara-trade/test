@@ -153,12 +153,20 @@ async def on_mine_click(callback: CallbackQuery):
     try:
         user_id = callback.from_user.id
         
+        # Записываем клик и проверяем интервал (защита от спама)
+        click_interval = heat_system.record_click(user_id)
+        
+        # Ограничение: минимум 1 секунда между кликами
+        if click_interval is not None and click_interval < 1.0:
+            await callback.answer("Не спамьте, подождите 1 секунду", show_alert=False)
+            return
+
         # Получаем СВЕЖИЕ данные пользователя из БД
         user = await db.get_user(user_id)
         if not user:
             await callback.answer('Ошибка: пользователь не найден')
             return
-
+        
         # Проверка блокировки перегрева (и сброс если истекла)
         block_status = await db.check_and_clear_heat_block(user_id)
         
@@ -190,7 +198,7 @@ async def on_mine_click(callback: CallbackQuery):
 
         heat_info = heat_system.get_heat_info(heat)
 
-        # 8.2.2 Защита от быстрых кликов
+        # 8.2.2 Защита от быстрых кликов (более агрессивная - блокировка)
         allowed, status, speed = await click_protector.check_click(user_id)
         
         if not allowed:
@@ -208,9 +216,6 @@ async def on_mine_click(callback: CallbackQuery):
         if not allowed:
             await callback.answer(error_msg, show_alert=True)
             return
-        
-        # Записываем клик в трекер
-        click_interval = heat_system.record_click(user_id)
         
         # Записываем действие в лимитер
         await rate_limiter.record_action(user_id, ActionType.CLICK)
