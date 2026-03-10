@@ -27,8 +27,8 @@ class HeatSystem:
     HEAT_PER_CLICK_MAX = 5
     
     # Пороги скорости кликов
-    FAST_CLICK_THRESHOLD = 1.0      # < 1 сек между кликами
-    VERY_FAST_CLICK_THRESHOLD = 0.5  # < 0.5 сек между кликами
+    FAST_CLICK_THRESHOLD = 1.5      # < 1.5 сек между кликами
+    VERY_FAST_CLICK_THRESHOLD = 1.0  # < 1.0 сек между кликами
     
     # Дополнительный перегрев за быстрые клики
     FAST_CLICK_HEAT = 5
@@ -39,7 +39,7 @@ class HeatSystem:
     
     # Блокировка при перегреве
     OVERHEAT_THRESHOLD = 100
-    OVERHEAT_PENALTY_SECONDS = 5
+    OVERHEAT_PENALTY_SECONDS = 60
 
     # Бонус перегрева
     HEAT_BONUS_THRESHOLD = 80  # При каком перегреве начинает действовать бонус
