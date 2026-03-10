@@ -192,30 +192,37 @@ class BackgroundWorker:
             logger.error(f"Energy regen error: {e}")
     
     async def _heat_cooldown_tick(self):
-        """Остывание перегрева"""
+        """Остывание перегрева и сброс истёкших блокировок"""
         try:
             from database import db
             import aiosqlite
             
             async with aiosqlite.connect(db.db_path) as conn:
-                # Остывает только если НЕТ активной блокировки
-                # -1 перегрев в секунду для всех с перегревом > 0 и без блокировки
+                now = datetime.now().isoformat()
+                
+                # 1. Сбрасываем истёкшие блокировки: heat = 15, blocked_until = NULL
+                cursor = await conn.execute("""
+                    UPDATE users 
+                    SET heat = 15, heat_blocked_until = NULL
+                    WHERE heat_blocked_until IS NOT NULL 
+                    AND heat_blocked_until <= ?
+                    AND heat >= 100
+                """, (now,))
+                
+                cleared_count = cursor.rowcount
+                
+                # 2. Остывание для тех, у кого нет блокировки (heat < 100)
                 await conn.execute("""
                     UPDATE users 
                     SET heat = MAX(0, heat - 1)
-                    WHERE heat > 0
-                    AND (heat_blocked_until IS NULL OR heat_blocked_until <= datetime('now'))
-                """)
-                
-                # Очищаем истёкшие блокировки
-                await conn.execute("""
-                    UPDATE users 
-                    SET heat_blocked_until = NULL
-                    WHERE heat_blocked_until IS NOT NULL 
-                    AND heat_blocked_until <= datetime('now')
-                """)
+                    WHERE heat > 0 AND heat < 100
+                    AND (heat_blocked_until IS NULL OR heat_blocked_until <= ?)
+                """, (now,))
                 
                 await conn.commit()
+                
+                if cleared_count > 0:
+                    logger.info(f"🔥 Cleared {cleared_count} expired heat blocks (heat -> 15)")
                 
         except Exception as e:
             logger.error(f"Heat cooldown error: {e}")
