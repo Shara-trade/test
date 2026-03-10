@@ -263,8 +263,16 @@ async def on_mine_click(callback: CallbackQuery):
         level_bonus = LevelSystem.get_mining_bonus(level)
         heat_bonus = heat_info.bonus_multiplier
         
+        # Бонусы от модулей
+        module_bonuses = await db.get_module_bonuses(user_id)
+        
+        # Применяем бонусы модулей
+        mining_bonus_from_modules = module_bonuses.get('mining_bonus', 0) / 100  # Проценты
+        crit_bonus_from_modules = module_bonuses.get('crit_chance', 0)
+        loot_bonus_from_modules = module_bonuses.get('loot_chance', 0)
+        
         # === КРИТ-СИСТЕМА ===
-        crit_chance = 0.03  # 3% базовый шанс
+        crit_chance = 0.03 + crit_bonus_from_modules  # 3% базовый + бонусы
         is_crit = random.random() < crit_chance
         crit_multiplier = 1
         crit_text = ""
@@ -282,7 +290,7 @@ async def on_mine_click(callback: CallbackQuery):
                 crit_text = "⚡ УЛЬТРА-КРИТ x10!"
 
         # === РАСЧЁТ НАГРАД ===
-        total_bonus = level_bonus * heat_bonus
+        total_bonus = (level_bonus + mining_bonus_from_modules) * heat_bonus
         rewards = asteroid_system.get_asteroid_rewards(asteroid, total_bonus)
         
         metal_gain = rewards["metal"] * crit_multiplier
@@ -296,7 +304,7 @@ async def on_mine_click(callback: CallbackQuery):
         heat_gain = heat_system.get_click_heat_increase(user_id, click_interval)
         
         # === ПРОВЕРКА ЛУТА ===
-        loot_item = loot_system.try_drop()
+        loot_item = loot_system.try_drop(luck_bonus=loot_bonus_from_modules)
         loot_text = ""
         
         if loot_item:
