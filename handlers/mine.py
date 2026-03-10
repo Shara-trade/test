@@ -131,21 +131,25 @@ async def on_mine_click(callback: CallbackQuery):
     try:
         user_id = callback.from_user.id
         
-        # Проверка перегрева
+        # Получаем СВЕЖИЕ данные пользователя из БД
         user = await db.get_user(user_id)
         if not user:
             await callback.answer('Ошибка: пользователь не найден')
             return
 
+        # Проверка перегрева (строгая проверка >= 100)
         heat = user.get('heat') or 0
-        heat_info = heat_system.get_heat_info(heat)
         
-        if heat_info.is_overheated:
+        if heat >= 100:
             await callback.answer(
-                f'🔥 ПЕРЕГРЕВ! Буры остывают {heat_info.cooldown_seconds} сек',
+                '🔥 ПЕРЕГРЕВ! Буры остывают...',
                 show_alert=True
             )
+            # Обновляем экран чтобы показать актуальный перегрев
+            await show_mine_screen(callback.message, user_id, edit=True)
             return
+
+        heat_info = heat_system.get_heat_info(heat)
 
         # 8.2.2 Защита от быстрых кликов
         allowed, status, speed = await click_protector.check_click(user_id)
@@ -293,8 +297,24 @@ async def on_mine_click(callback: CallbackQuery):
         # Добавляем опыт
         level_result = await db.add_experience(user_id, exp_gain)
         
-        # Обновляем перегрев
-        await db.update_heat(user_id, heat_gain)
+        # Обновляем перегрев и проверяем блокировку
+        heat_result = await db.update_heat(user_id, heat_gain)
+        
+        # Если перегрев достиг 100% - показываем уведомление
+        if heat_result.get("is_overheated"):
+            # Добавляем информацию о перегреве в popup
+            try:
+                await callback.answer(
+                    f"{popup_text}\n🔥 ПЕРЕГРЕВ 100%!",
+                    show_alert=False
+                )
+            except:
+                await callback.answer("🔥 ПЕРЕГРЕВ 100%!", show_alert=False)
+            
+            # Обновляем экран и НЕ даём кликнуть снова
+            level_up_info = level_result if level_result.get('levels_gained', 0) > 0 else None
+            await show_mine_screen(callback.message, user_id, edit=True, level_up_info=level_up_info)
+            return
         
         # Обновляем активность
         await db.update_last_activity(user_id)
