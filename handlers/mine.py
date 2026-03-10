@@ -38,7 +38,7 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
     # Получаем статистику
     stats = await db.get_user_stats(user_id)
     
-    # Безопасное получение значений
+    # Безопасное получение значений (защита от NULL в БД)
     energy = user.get('energy') or 1000
     max_energy = user.get('max_energy') or 1000
     heat = user.get('heat') or 0
@@ -47,6 +47,10 @@ async def show_mine_screen(message_or_callback, user_id: int, edit: bool = False
     metal = user.get('metal') or 0
     crystals = user.get('crystals') or 0
     dark_matter = user.get('dark_matter') or 0
+    
+    # Убедимся что это числа
+    level = int(level) if level else 1
+    experience = int(experience) if experience else 0
     
     # Расчёты
     energy_percent = int((energy / max_energy) * 100) if max_energy > 0 else 0
@@ -243,8 +247,8 @@ async def on_mine_click(callback: CallbackQuery):
         crystal_gain = rewards["crystals"] * crit_multiplier
         dark_matter_gain = rewards["dark_matter"] * crit_multiplier
         
-        # Опыт за клик
-        exp_gain = int(LevelSystem.calculate_exp_reward("click", 1) * rewards["exp_bonus"])
+        # Опыт: базовый от астероида * крит-множитель
+        exp_gain = rewards["exp_reward"] * crit_multiplier
         
         # Перегрев
         heat_gain = heat_system.get_click_heat_increase(user_id, click_interval)
@@ -277,19 +281,23 @@ async def on_mine_click(callback: CallbackQuery):
         if is_crit:
             result_lines.append(f"{crit_text} {asteroid.emoji} {asteroid.name}!")
         else:
-            result_lines.append(f"{asteroid.emoji} {asteroid.name} астероид!")
+            result_lines.append(f"{asteroid.emoji} {asteroid.name}!")
         
         # Ресурсы
         resource_parts = []
         if metal_gain > 0:
-            resource_parts.append(f"+{metal_gain:,} металла")
+            resource_parts.append(f"+{metal_gain:,} ⚙️")
         if crystal_gain > 0:
-            resource_parts.append(f"+{crystal_gain:,} кристаллов")
+            resource_parts.append(f"+{crystal_gain:,} 💎")
         if dark_matter_gain > 0:
-            resource_parts.append(f"+{dark_matter_gain:,} тёмной материи")
+            resource_parts.append(f"+{dark_matter_gain:,} ⚫")
         
         if resource_parts:
             result_lines.append(" | ".join(resource_parts))
+        
+        # Опыт
+        if exp_gain > 1:
+            result_lines.append(f"✨ +{exp_gain} опыта")
         
         # Бонус от перегрева
         if heat_bonus > 1.0:
