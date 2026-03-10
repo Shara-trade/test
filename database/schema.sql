@@ -73,6 +73,20 @@ CREATE TABLE IF NOT EXISTS inventory (
 CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_key ON inventory(item_key);
 
+--4.3.1. Таблица user_modules (установленные модули)
+CREATE TABLE IF NOT EXISTS user_modules (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+ item_key TEXT NOT NULL, -- ссылка на items (только type=module)
+ installed_in TEXT DEFAULT NULL, -- NULL=в инвентаре, 'player'=на игроке, drone_id=на дроне
+ slot_number INTEGER DEFAULT1,
+ installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(user_id, item_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_modules_user ON user_modules(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_modules_installed ON user_modules(installed_in);
+
 --4.4. Таблица items (справочник предметов)
 CREATE TABLE IF NOT EXISTS items (
  item_key TEXT PRIMARY KEY,
