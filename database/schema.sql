@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
  -- Состояние
  current_system TEXT DEFAULT 'alpha_7',
  heat INTEGER DEFAULT 0,
+ heat_blocked_until TIMESTAMP DEFAULT NULL,
  total_clicks INTEGER DEFAULT 0,
  total_mined INTEGER DEFAULT 0,
  
