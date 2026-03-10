@@ -26,6 +26,18 @@ class DatabaseManager:
             except:
                 pass  # Колонка уже существует
 
+            # Миграция: исправляем NULL значения на 0
+            try:
+                await db.execute("UPDATE users SET level = 1 WHERE level IS NULL")
+                await db.execute("UPDATE users SET experience = 0 WHERE experience IS NULL")
+                await db.execute("UPDATE users SET energy = 1000 WHERE energy IS NULL")
+                await db.execute("UPDATE users SET max_energy = 1000 WHERE max_energy IS NULL")
+                await db.execute("UPDATE users SET heat = 0 WHERE heat IS NULL")
+                await db.commit()
+                print("Migration: fixed NULL values to defaults")
+            except Exception as e:
+                print(f"Migration error: {e}")
+
     async def get_user(self, user_id: int) -> Optional[Dict]:
         """Получить пользователя как словарь"""
         import logging
@@ -41,6 +53,31 @@ class DatabaseManager:
                     data = dict(row)
                     data["is_banned"] = bool(data.get("is_banned", 0))
                     data["is_admin"] = bool(data.get("is_admin", 0))
+                    
+                    # Безопасные дефолты для None значений
+                    if data.get("level") is None:
+                        data["level"] = 1
+                    if data.get("experience") is None:
+                        data["experience"] = 0
+                    if data.get("energy") is None:
+                        data["energy"] = 1000
+                    if data.get("max_energy") is None:
+                        data["max_energy"] = 1000
+                    if data.get("heat") is None:
+                        data["heat"] = 0
+                    if data.get("metal") is None:
+                        data["metal"] = 0
+                    if data.get("crystals") is None:
+                        data["crystals"] = 0
+                    if data.get("dark_matter") is None:
+                        data["dark_matter"] = 0
+                    if data.get("credits") is None:
+                        data["credits"] = 0
+                    if data.get("total_clicks") is None:
+                        data["total_clicks"] = 0
+                    if data.get("total_mined") is None:
+                        data["total_mined"] = 0
+                    
                     logger.debug(f"get_user({user_id}): level={data.get('level')}, exp={data.get('experience')}")
                     return data
                 logger.warning(f"get_user({user_id}): user not found")
@@ -52,7 +89,9 @@ class DatabaseManager:
             try:
                 ref = f"REF{user_id}"
                 await db.execute(
-                    "INSERT INTO users (user_id, username, first_name, last_name, referral_code) VALUES (?, ?, ?, ?, ?)",
+                    """INSERT INTO users (user_id, username, first_name, last_name, referral_code, 
+                       level, experience, energy, max_energy, heat)
+                       VALUES (?, ?, ?, ?, ?, 1, 0, 1000, 1000, 0)""",
                     (user_id, username, first_name, last_name, ref)
                 )
                 await db.commit()
@@ -124,8 +163,9 @@ class DatabaseManager:
                         logger.error(f"User {user_id} not found in add_experience")
                         return {"success": False, "error": "User not found"}
                     
-                    current_level = row["level"]
-                    current_exp = row["experience"]
+                    # Безопасное получение значений с обработкой None
+                    current_level = row["level"] if row["level"] is not None else 1
+                    current_exp = row["experience"] if row["experience"] is not None else 0
                 
                 logger.info(f"Adding {amount} exp to user {user_id}. Current: {current_exp}")
                 
@@ -196,7 +236,7 @@ class DatabaseManager:
                     if not row:
                         return {"success": False}
                     
-                    current_heat = row["heat"]
+                    current_heat = row["heat"] if row["heat"] is not None else 0
                 
                 # Обновляем перегрев (0-100)
                 new_heat = max(0, min(100, current_heat + heat_change))
@@ -306,6 +346,50 @@ class DatabaseManager:
                 (user_id,)
             )
             await db.commit()
+
+    async def fix_null_values(self, user_id: int = None):
+        """Исправить NULL значения в базе данных"""
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                # Исправляем для конкретного пользователя или для всех
+                if user_id:
+                    await db.execute("""
+                        UPDATE users SET 
+                            level = COALESCE(level, 1),
+                            experience = COALESCE(experience, 0),
+                            energy = COALESCE(energy, 1000),
+                            max_energy = COALESCE(max_energy, 1000),
+                            heat = COALESCE(heat, 0),
+                            metal = COALESCE(metal, 0),
+                            crystals = COALESCE(crystals, 0),
+                            dark_matter = COALESCE(dark_matter, 0),
+                            credits = COALESCE(credits, 0),
+                            total_clicks = COALESCE(total_clicks, 0),
+                            total_mined = COALESCE(total_mined, 0)
+                        WHERE user_id = ?
+                    """, (user_id,))
+                else:
+                    await db.execute("""
+                        UPDATE users SET 
+                            level = COALESCE(level, 1),
+                            experience = COALESCE(experience, 0),
+                            energy = COALESCE(energy, 1000),
+                            max_energy = COALESCE(max_energy, 1000),
+                            heat = COALESCE(heat, 0),
+                            metal = COALESCE(metal, 0),
+                            crystals = COALESCE(crystals, 0),
+                            dark_matter = COALESCE(dark_matter, 0),
+                            credits = COALESCE(credits, 0),
+                            total_clicks = COALESCE(total_clicks, 0),
+                            total_mined = COALESCE(total_mined, 0)
+                        WHERE level IS NULL OR experience IS NULL OR energy IS NULL
+                    """)
+                
+                await db.commit()
+                return True
+            except Exception as e:
+                print(f"Error fixing null values: {e}")
+                return False
 
     async def get_user_stats(self, user_id: int) -> Optional[Dict]:
         """Получить полную статистику пользователя"""
