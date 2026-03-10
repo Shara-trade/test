@@ -10,14 +10,18 @@ def get_main_menu_keyboard():
  KeyboardButton(text='📦 Инвентарь')
  ],
  [
+ KeyboardButton(text='⚙️ Модули'),
  KeyboardButton(text='🏪 Рынок'),
- KeyboardButton(text='🔨 Крафт'),
- KeyboardButton(text='👥 Клан')
+ KeyboardButton(text='🔨 Крафт')
  ],
  [
+ KeyboardButton(text='👥 Клан'),
  KeyboardButton(text='🌌 Галактика'),
- KeyboardButton(text='👤 Профиль'),
- KeyboardButton(text='📊 Топ')
+ KeyboardButton(text='👤 Профиль')
+ ],
+ [
+ KeyboardButton(text='📊 Топ'),
+ KeyboardButton(text='❓ Помощь')
  ]
  ]
  return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, persistent=True)
