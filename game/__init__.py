@@ -20,7 +20,7 @@ from .seasons import SeasonSystem, Season, SeasonType
 from .chat_games import ChatGamesSystem, ChatEvent, ChatEventType
 from .economy import EconomySystem, Currency, Price, Transaction
 from .levels import LevelSystem, LevelInfo
-from .asteroids import AsteroidSystem, AsteroidType, asteroid_system
+from .asteroids import AsteroidSystem, AsteroidType, Asteroid, AsteroidSize, asteroid_system
 
 __all__ = [
     'MiningSystem',
@@ -57,5 +57,7 @@ __all__ = [
     'LevelInfo',
     'AsteroidSystem',
     'AsteroidType',
+    'Asteroid',
+    'AsteroidSize',
     'asteroid_system',
 ]
