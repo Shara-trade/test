@@ -1,3 +1,7 @@
+"""
+Точка входа для бота Asteroid Miner
+"""
+import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
