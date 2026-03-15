@@ -152,6 +152,66 @@ class AdminService:
             "count": len(players)
         }
     
+    async def search_players_advanced(
+        self,
+        query: Optional[str] = None,
+        min_level: Optional[int] = None,
+        max_level: Optional[int] = None,
+        is_banned: Optional[bool] = None,
+        is_admin: Optional[bool] = None,
+        min_metal: Optional[int] = None,
+        min_crystals: Optional[int] = None,
+        registered_after: Optional[str] = None,
+        registered_before: Optional[str] = None,
+        last_activity_after: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1
+    ) -> Dict:
+        """
+        Расширенный поиск игроков с фильтрами.
+        
+        Args:
+            query: Поисковый запрос
+            min_level: Минимальный уровень
+            max_level: Максимальный уровень
+            is_banned: Только забаненные/незабаненные
+            is_admin: Только админы/не админы
+            min_metal: Минимум металла
+            min_crystals: Минимум кристаллов
+            registered_after: Зарегистрирован после
+            registered_before: Зарегистрирован до
+            last_activity_after: Активен после
+            limit: Лимит результатов
+            page: Номер страницы
+            
+        Returns:
+            Dict с результатами
+        """
+        offset = (page - 1) * limit
+        
+        result = await self.repo.search_players_advanced(
+            query=query,
+            min_level=min_level,
+            max_level=max_level,
+            is_banned=is_banned,
+            is_admin=is_admin,
+            min_metal=min_metal,
+            min_crystals=min_crystals,
+            registered_after=registered_after,
+            registered_before=registered_before,
+            last_activity_after=last_activity_after,
+            limit=limit,
+            offset=offset
+        )
+        
+        return {
+            "success": True,
+            "players": result["players"],
+            "total": result["total"],
+            "page": page,
+            "has_more": result["has_more"]
+        }
+    
     async def update_player_resource(
         self,
         user_id: int,
@@ -180,7 +240,7 @@ class AdminService:
             )
         except Exception as e:
             return {"success": False, "error": str(e)}
-        
+            
         # Получаем текущее значение
         player = await self.repo.get_player(user_id)
         if not player:
@@ -199,7 +259,7 @@ class AdminService:
         if success:
             # Инвалидируем кэш
             await self.cache.invalidate_player(user_id)
-            
+        
             return {
                 "success": True,
                 "old_value": old_value,
@@ -563,6 +623,166 @@ class AdminService:
         """
         return await self.repo.get_realtime_stats()
     
+    async def get_activity_stats(self, days: int = 7) -> Dict:
+        """
+        Получить статистику активности по дням.
+        
+        Args:
+            days: Количество дней
+            
+        Returns:
+            Dict со статистикой
+        """
+        return await self.repo.get_activity_stats(days)
+    
+    # ==================== МАССОВЫЕ ОПЕРАЦИИ ====================
+    
+    async def prepare_mass_operation(
+        self,
+        min_level: Optional[int] = None,
+        max_level: Optional[int] = None,
+        active_last_days: Optional[int] = None,
+        include_banned: bool = False
+    ) -> Dict:
+        """
+        Подготовить массовую операцию - получить список пользователей.
+        
+        Args:
+            min_level: Минимальный уровень
+            max_level: Максимальный уровень
+            active_last_days: Активны последние N дней
+            include_banned: Включать забаненных
+            
+        Returns:
+            Dict с количеством пользователей
+        """
+        min_last_activity = None
+        if active_last_days:
+            from datetime import datetime, timedelta
+            min_last_activity = (datetime.now() - timedelta(days=active_last_days)).isoformat()
+        
+        user_ids = await self.repo.get_users_for_mass_operation(
+            min_level=min_level,
+            max_level=max_level,
+            min_last_activity=min_last_activity,
+            is_banned=include_banned
+        )
+        
+        return {
+            "success": True,
+            "total_users": len(user_ids),
+            "user_ids": user_ids[:100],  # Возвращаем только первые 100 для предпросмотра
+            "filters": {
+                "min_level": min_level,
+                "max_level": max_level,
+                "active_last_days": active_last_days,
+                "include_banned": include_banned
+            }
+        }
+    
+    async def mass_give_item(
+        self,
+        user_ids: List[int],
+        item_key: str,
+        quantity: int,
+        admin_id: int
+    ) -> Dict:
+        """
+        Массовая выдача предмета.
+        
+        Args:
+            user_ids: Список ID пользователей
+            item_key: Ключ предмета
+            quantity: Количество
+            admin_id: ID админа
+            
+        Returns:
+            Dict с результатом
+        """
+        # Валидация
+        if quantity < 1 or quantity > 100:
+            return {"success": False, "error": "Количество должно быть от 1 до 100"}
+        
+        if len(user_ids) > 10000:
+            return {"success": False, "error": "Максимум 10000 пользователей за раз"}
+        
+        # Требуется подтверждение для больших операций
+        if len(user_ids) > 100:
+            confirmation = get_confirmation_service()
+            token = await confirmation.request_confirmation(
+                user_id=admin_id,
+                action="mass_give_item",
+                data={
+                    "user_count": len(user_ids),
+                    "item_key": item_key,
+                    "quantity": quantity
+                }
+            )
+            return {
+                "success": False,
+                "requires_confirmation": True,
+                "token": token,
+                "message": f"⚠️ Требуется подтверждение для {len(user_ids)} пользователей"
+            }
+        
+        return await self.repo.mass_give_item(
+            user_ids=user_ids,
+            item_key=item_key,
+            quantity=quantity,
+            admin_id=admin_id
+        )
+        
+    async def mass_add_resources(
+        self,
+        user_ids: List[int],
+        resources: Dict[str, int],
+        admin_id: int
+    ) -> Dict:
+        """
+        Массовое начисление ресурсов.
+        
+        Args:
+            user_ids: Список ID пользователей
+            resources: Dict с ресурсами для добавления
+            admin_id: ID админа
+            
+        Returns:
+            Dict с результатом
+        """
+        # Валидация
+        for key, value in resources.items():
+            if value < 0:
+                return {"success": False, "error": f"Значение {key} должно быть положительным"}
+            if value > 10**9:
+                return {"success": False, "error": f"Значение {key} слишком большое (макс. 10^9)"}
+        
+        if len(user_ids) > 10000:
+            return {"success": False, "error": "Максимум 10000 пользователей за раз"}
+        
+        # Требуется подтверждение для больших операций
+        if len(user_ids) > 100:
+            confirmation = get_confirmation_service()
+            token = await confirmation.request_confirmation(
+                user_id=admin_id,
+                action="mass_add_resources",
+                data={
+                    "user_count": len(user_ids),
+                    "resources": resources
+                }
+            )
+            return {
+                "success": False,
+                "requires_confirmation": True,
+                "token": token,
+                "message": f"⚠️ Требуется подтверждение для {len(user_ids)} пользователей"
+            }
+        
+        return await self.repo.mass_add_resources(
+            user_ids=user_ids,
+            resources=resources,
+            admin_id=admin_id
+        )
+    
     # ==================== ЛОГИ ====================
     
     async def get_logs(
@@ -667,6 +887,7 @@ class AdminService:
     PRESETS = {
         "starter_pack": {
             "name": "🎁 Стартовый набор",
+            "description": "Базовый набор для нового игрока",
             "items": [
                 ("container_common", 3),
                 ("container_rare", 1),
@@ -678,6 +899,7 @@ class AdminService:
         },
         "event_reward": {
             "name": "🎉 Награда за ивент",
+            "description": "Награда за участие в событии",
             "items": [
                 ("container_epic", 2),
                 ("container_legendary", 1),
@@ -690,6 +912,7 @@ class AdminService:
         },
         "compensation": {
             "name": "⚖️ Компенсация",
+            "description": "Компенсация за баги/проблемы",
             "items": [
                 ("container_rare", 5),
                 ("container_epic", 2)
@@ -698,6 +921,43 @@ class AdminService:
                 "metal": 25000,
                 "crystals": 2500,
                 "dark_matter": 25
+            }
+        },
+        "premium_gift": {
+            "name": "⭐ Премиум подарок",
+            "description": "Особый подарок от администрации",
+            "items": [
+                ("container_mythic", 1),
+                ("container_epic", 3),
+                ("container_rare", 5),
+            ],
+            "resources": {
+                "metal": 100000,
+                "crystals": 10000,
+                "dark_matter": 100
+            }
+        },
+        "weekly_bonus": {
+            "name": "📅 Еженедельный бонус",
+            "description": "Бонус за активность",
+            "items": [
+                ("container_rare", 2),
+                ("container_epic", 1),
+            ],
+            "resources": {
+                "metal": 15000,
+                "crystals": 1500
+            }
+        },
+        "test_reward": {
+            "name": "🧪 Тестовая награда",
+            "description": "Для тестирования функций",
+            "items": [
+                ("container_common", 1),
+            ],
+            "resources": {
+                "metal": 100,
+                "crystals": 10
             }
         }
     }
@@ -784,11 +1044,34 @@ class AdminService:
             {
                 "id": preset_id,
                 "name": preset_data["name"],
+                "description": preset_data.get("description", ""),
                 "items": preset_data.get("items", []),
                 "resources": preset_data.get("resources", {})
             }
             for preset_id, preset_data in self.PRESETS.items()
         ]
+    
+    def get_preset(self, preset_id: str) -> Optional[Dict]:
+        """
+        Получить данные пресета по ID.
+        
+        Args:
+            preset_id: ID пресета
+            
+        Returns:
+            Dict с данными пресета или None
+        """
+        preset = self.PRESETS.get(preset_id)
+        if not preset:
+            return None
+        
+        return {
+            "id": preset_id,
+            "name": preset["name"],
+            "description": preset.get("description", ""),
+            "items": preset.get("items", []),
+            "resources": preset.get("resources", {})
+        }
     
     # ==================== ВСПОМОГАТЕЛЬНЫЕ ====================
     
