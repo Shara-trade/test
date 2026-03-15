@@ -84,6 +84,124 @@ class AdminRepository:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
     
+    async def search_players_advanced(
+        self, 
+        query: Optional[str] = None,
+        min_level: Optional[int] = None,
+        max_level: Optional[int] = None,
+        is_banned: Optional[bool] = None,
+        is_admin: Optional[bool] = None,
+        min_metal: Optional[int] = None,
+        min_crystals: Optional[int] = None,
+        registered_after: Optional[str] = None,
+        registered_before: Optional[str] = None,
+        last_activity_after: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0
+    ) -> Dict:
+        """
+        Расширенный поиск игроков с фильтрами.
+        
+        Args:
+            query: Поисковый запрос (ID или username)
+            min_level: Минимальный уровень
+            max_level: Максимальный уровень
+            is_banned: Фильтр по бану
+            is_admin: Фильтр по админке
+            min_metal: Минимум металла
+            min_crystals: Минимум кристаллов
+            registered_after: Зарегистрирован после (YYYY-MM-DD)
+            registered_before: Зарегистрирован до (YYYY-MM-DD)
+            last_activity_after: Был активен после (YYYY-MM-DD или ISO datetime)
+            limit: Лимит результатов
+            offset: Смещение
+            
+        Returns:
+            Dict с результатами и общим количеством
+        """
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            
+            # Базовый запрос
+            base_query = "FROM users WHERE 1=1"
+            params = []
+            
+            # Поиск по тексту
+            if query:
+                if query.isdigit():
+                    base_query += " AND user_id = ?"
+                    params.append(int(query))
+                else:
+                    search_pattern = f"%{query}%"
+                    base_query += """ AND (
+                        LOWER(username) LIKE LOWER(?) 
+                        OR LOWER(first_name) LIKE LOWER(?)
+                        OR LOWER(last_name) LIKE LOWER(?)
+                    )"""
+                    params.extend([search_pattern, search_pattern, search_pattern])
+            
+            # Фильтр по уровню
+            if min_level is not None:
+                base_query += " AND level >= ?"
+                params.append(min_level)
+            if max_level is not None:
+                base_query += " AND level <= ?"
+                params.append(max_level)
+            
+            # Фильтр по бану
+            if is_banned is not None:
+                base_query += " AND is_banned = ?"
+                params.append(1 if is_banned else 0)
+            
+            # Фильтр по админке
+            if is_admin is not None:
+                if is_admin:
+                    base_query += " AND user_id IN (SELECT user_id FROM admins WHERE is_active = 1)"
+                else:
+                    base_query += " AND user_id NOT IN (SELECT user_id FROM admins WHERE is_active = 1)"
+            
+            # Фильтр по ресурсам
+            if min_metal is not None:
+                base_query += " AND metal >= ?"
+                params.append(min_metal)
+            if min_crystals is not None:
+                base_query += " AND crystals >= ?"
+                params.append(min_crystals)
+            
+            # Фильтр по дате регистрации
+            if registered_after:
+                base_query += " AND DATE(created_at) >= DATE(?)"
+                params.append(registered_after)
+            if registered_before:
+                base_query += " AND DATE(created_at) <= DATE(?)"
+                params.append(registered_before)
+            
+            # Фильтр по активности
+            if last_activity_after:
+                base_query += " AND datetime(last_activity) >= datetime(?)"
+                params.append(last_activity_after)
+            
+            # Получаем общее количество
+            count_query = f"SELECT COUNT(*) as total {base_query}"
+            async with conn.execute(count_query, params) as cursor:
+                total = (await cursor.fetchone())["total"]
+            
+            # Получаем результаты
+            data_query = f"SELECT * {base_query} ORDER BY last_activity DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            async with conn.execute(data_query, params) as cursor:
+                rows = await cursor.fetchall()
+                players = [dict(r) for r in rows]
+            
+            return {
+                "players": players,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total
+            }
+    
     async def get_player_card_data(self, user_id: int) -> Optional[Dict]:
         """
         Получить полные данные для карточки игрока.
@@ -467,6 +585,13 @@ class AdminRepository:
             ) as cursor:
                 active_hour = (await cursor.fetchone())[0]
             
+            # Активных за день
+            async with conn.execute(
+                """SELECT COUNT(*) FROM users 
+                   WHERE datetime(last_activity) > datetime('now', '-1 day')"""
+            ) as cursor:
+                active_day = (await cursor.fetchone())[0]
+            
             # Добыто за час
             async with conn.execute(
                 """SELECT COALESCE(SUM(total_mined), 0) FROM users 
@@ -474,12 +599,260 @@ class AdminRepository:
             ) as cursor:
                 mined_hour = (await cursor.fetchone())[0]
             
+            # Добыто за день
+            async with conn.execute(
+                """SELECT COALESCE(SUM(total_mined), 0) FROM users 
+                   WHERE datetime(last_activity) > datetime('now', '-1 day')"""
+            ) as cursor:
+                mined_day = (await cursor.fetchone())[0]
+            
+            # Количество открытий контейнеров за час
+            async with conn.execute(
+                """SELECT COUNT(*) FROM containers 
+                   WHERE status = 'opened' 
+                   AND datetime(opened_at) > datetime('now', '-1 hour')"""
+            ) as cursor:
+                containers_opened_hour = (await cursor.fetchone())[0]
+            
+            # Количество кликов за час
+            async with conn.execute(
+                """SELECT COALESCE(SUM(total_clicks), 0) FROM users 
+                   WHERE datetime(last_activity) > datetime('now', '-1 hour')"""
+            ) as cursor:
+                clicks_hour = (await cursor.fetchone())[0]
+            
             return {
                 "online_now": online_now,
                 "active_hour": active_hour,
+                "active_day": active_day,
                 "mined_hour": mined_hour or 0,
+                "mined_day": mined_day or 0,
+                "containers_opened_hour": containers_opened_hour,
+                "clicks_hour": clicks_hour or 0,
                 "timestamp": datetime.now().isoformat()
             }
+    
+    async def get_activity_stats(self, days: int = 7) -> Dict:
+        """
+        Получить статистику активности по дням.
+        
+        Args:
+            days: Количество дней
+            
+        Returns:
+            Dict со статистикой по дням
+        """
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            
+            # Активность по дням
+            async with conn.execute(f"""
+                SELECT 
+                    DATE(last_activity) as date,
+                    COUNT(DISTINCT user_id) as active_users,
+                    SUM(total_mined) as total_mined
+                FROM users
+                WHERE DATE(last_activity) >= DATE('now', '-{days} days')
+                GROUP BY DATE(last_activity)
+                ORDER BY date DESC
+            """) as cursor:
+                rows = await cursor.fetchall()
+                daily_stats = [dict(r) for r in rows]
+                
+            # Регистрации по дням
+            async with conn.execute(f"""
+                SELECT 
+                    DATE(created_at) as date,
+                    COUNT(*) as new_users
+                FROM users
+                WHERE DATE(created_at) >= DATE('now', '-{days} days')
+                GROUP BY DATE(created_at)
+                ORDER BY date DESC
+            """) as cursor:
+                rows = await cursor.fetchall()
+                registration_stats = [dict(r) for r in rows]
+            
+            return {
+                "daily_activity": daily_stats,
+                "daily_registrations": registration_stats,
+                "period_days": days
+            }
+    
+    # ==================== МАССОВЫЕ ОПЕРАЦИИ ====================
+    
+    async def get_users_for_mass_operation(
+        self,
+        min_level: Optional[int] = None,
+        max_level: Optional[int] = None,
+        min_last_activity: Optional[str] = None,
+        is_banned: bool = False,
+        limit: int = 10000
+    ) -> List[int]:
+        """
+        Получить список пользователей для массовой операции.
+        
+        Args:
+            min_level: Минимальный уровень
+            max_level: Максимальный уровень
+            min_last_activity: Минимальная активность (ISO datetime)
+            is_banned: Включать забаненных
+            limit: Максимальное количество
+            
+        Returns:
+            List[int] - список user_id
+        """
+        async with aiosqlite.connect(self.db_path) as conn:
+            query = "SELECT user_id FROM users WHERE 1=1"
+            params = []
+            
+            if not is_banned:
+                query += " AND is_banned = 0"
+            
+            if min_level is not None:
+                query += " AND level >= ?"
+                params.append(min_level)
+            
+            if max_level is not None:
+                query += " AND level <= ?"
+                params.append(max_level)
+            
+            if min_last_activity:
+                query += " AND datetime(last_activity) >= datetime(?)"
+                params.append(min_last_activity)
+            
+            query += f" LIMIT {limit}"
+            
+            async with conn.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+                return [r[0] for r in rows]
+    
+    async def mass_give_item(
+        self,
+        user_ids: List[int],
+        item_key: str,
+        quantity: int,
+        admin_id: int
+    ) -> Dict:
+        """
+        Массовая выдача предмета.
+        
+        Args:
+            user_ids: Список ID пользователей
+            item_key: Ключ предмета
+            quantity: Количество
+            admin_id: ID админа
+            
+        Returns:
+            Dict с результатом
+        """
+        if not user_ids:
+            return {"success": False, "error": "Список пользователей пуст"}
+        
+        if len(user_ids) > 10000:
+            return {"success": False, "error": "Максимум 10000 пользователей за раз"}
+        
+        success_count = 0
+        error_count = 0
+        
+        async with aiosqlite.connect(self.db_path) as conn:
+            for user_id in user_ids:
+                try:
+                    # Проверяем наличие предмета
+                    async with conn.execute(
+                        "SELECT item_id, quantity FROM inventory WHERE user_id = ? AND item_key = ?",
+                        (user_id, item_key)
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                    
+                    if row:
+                        await conn.execute(
+                            "UPDATE inventory SET quantity = quantity + ? WHERE item_id = ?",
+                            (quantity, row[0])
+                        )
+                    else:
+                        await conn.execute(
+                            "INSERT INTO inventory (user_id, item_key, quantity) VALUES (?, ?, ?)",
+                            (user_id, item_key, quantity)
+                        )
+                    
+                    success_count += 1
+                except:
+                    error_count += 1
+            
+            # Логируем
+            await conn.execute(
+                """INSERT INTO admin_logs (admin_id, action, details)
+                   VALUES (?, 'mass_give_item', ?)""",
+                (admin_id, f"{item_key} x{quantity} для {success_count} пользователей")
+            )
+            
+            await conn.commit()
+        
+        return {
+            "success": True,
+            "total": len(user_ids),
+            "success_count": success_count,
+            "error_count": error_count
+        }
+    
+    async def mass_add_resources(
+        self,
+        user_ids: List[int],
+        resources: Dict[str, int],
+        admin_id: int
+    ) -> Dict:
+        """
+        Массовое начисление ресурсов.
+        
+        Args:
+            user_ids: Список ID пользователей
+            resources: Dict с ресурсами для добавления
+            admin_id: ID админа
+            
+        Returns:
+            Dict с результатом
+        """
+        if not user_ids:
+            return {"success": False, "error": "Список пользователей пуст"}
+        
+        if len(user_ids) > 10000:
+            return {"success": False, "error": "Максимум 10000 пользователей за раз"}
+        
+        success_count = 0
+        error_count = 0
+        
+        # Формируем SET часть
+        set_parts = [f"{k} = {k} + ?" for k in resources.keys()]
+        set_clause = ", ".join(set_parts)
+        values = list(resources.values())
+        
+        async with aiosqlite.connect(self.db_path) as conn:
+            for user_id in user_ids:
+                try:
+                    await conn.execute(
+                        f"UPDATE users SET {set_clause} WHERE user_id = ?",
+                        values + [user_id]
+                    )
+                    success_count += 1
+                except:
+                    error_count += 1
+            
+            # Логируем
+            resources_str = ", ".join(f"{k}: +{v}" for k, v in resources.items())
+            await conn.execute(
+                """INSERT INTO admin_logs (admin_id, action, details)
+                   VALUES (?, 'mass_add_resources', ?)""",
+                (admin_id, f"{resources_str} для {success_count} пользователей")
+            )
+            
+            await conn.commit()
+        
+        return {
+            "success": True,
+            "total": len(user_ids),
+            "success_count": success_count,
+            "error_count": error_count
+        }
     
     # ==================== ЛОГИ ====================
     
@@ -535,7 +908,7 @@ class AdminRepository:
             async with conn.execute(query, params) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
-    
+                
     async def log_action(
         self, 
         admin_id: int, 
