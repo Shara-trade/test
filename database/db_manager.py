@@ -147,6 +147,33 @@ class DatabaseManager:
             except Exception as e:
                 print(f"Migration user_drones table error: {e}")
 
+            # Миграция: создаём таблицу hired_drones (дроны в найме)
+            try:
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS hired_drones (
+                        user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+                        
+                        base_lvl1 INTEGER DEFAULT 0, base_lvl2 INTEGER DEFAULT 0,
+                        base_lvl3 INTEGER DEFAULT 0, base_lvl4 INTEGER DEFAULT 0, base_lvl5 INTEGER DEFAULT 0,
+                        
+                        miner_lvl1 INTEGER DEFAULT 0, miner_lvl2 INTEGER DEFAULT 0,
+                        miner_lvl3 INTEGER DEFAULT 0, miner_lvl4 INTEGER DEFAULT 0, miner_lvl5 INTEGER DEFAULT 0,
+                        
+                        laser_lvl1 INTEGER DEFAULT 0, laser_lvl2 INTEGER DEFAULT 0,
+                        laser_lvl3 INTEGER DEFAULT 0, laser_lvl4 INTEGER DEFAULT 0, laser_lvl5 INTEGER DEFAULT 0,
+                        
+                        quantum_lvl1 INTEGER DEFAULT 0, quantum_lvl2 INTEGER DEFAULT 0,
+                        quantum_lvl3 INTEGER DEFAULT 0, quantum_lvl4 INTEGER DEFAULT 0, quantum_lvl5 INTEGER DEFAULT 0,
+                        
+                        ai_lvl1 INTEGER DEFAULT 0, ai_lvl2 INTEGER DEFAULT 0,
+                        ai_lvl3 INTEGER DEFAULT 0, ai_lvl4 INTEGER DEFAULT 0, ai_lvl5 INTEGER DEFAULT 0
+                    )
+                """)
+                await db.commit()
+                print("Migration: created hired_drones table")
+            except Exception as e:
+                print(f"Migration hired_drones table error: {e}")
+
             # Инициализация администраторов из config.py (в том же соединении)
             await self._init_admins_internal(db)
 
@@ -213,7 +240,7 @@ class DatabaseManager:
                 row = await cursor.fetchone()
                 if row[0] > 0:
                     return  # Админы уже есть
-            
+                
             # Добавляем админов из config.py
             for i, admin_id in enumerate(ADMIN_IDS):
                 if i == 0:
@@ -227,7 +254,7 @@ class DatabaseManager:
                     "INSERT OR IGNORE INTO admins (user_id, role, added_by) VALUES (?, ?, ?)",
                     (admin_id, role, admin_id)
                 )
-            
+                
             await db.commit()
             print(f"Initialized {len(ADMIN_IDS)} admins from config.py")
 
@@ -1524,16 +1551,82 @@ class DatabaseManager:
 
     async def get_user_drones(self, user_id: int) -> Dict:
         """
-        Получить данные о дронах пользователя.
+        Получить данные о дронах в АНГАРЕ (свободных).
         
         Returns:
-            Dict с полями: base_lvl1...ai_lvl5, drones_hired, hired_until, 
+            Dict с полями: base_lvl1...ai_lvl5
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            # Получаем дроны в ангаре
+            async with db.execute(
+                "SELECT * FROM user_drones WHERE user_id = ?",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+            
+            if row:
+                return dict(row)
+            
+            # Создаём запись если нет
+            await db.execute(
+                "INSERT OR IGNORE INTO user_drones (user_id) VALUES (?)",
+                (user_id,)
+            )
+            await db.commit()
+            
+            # Возвращаем пустой словарь с нулями
+            result = {'user_id': user_id}
+            for dtype in ['base', 'miner', 'laser', 'quantum', 'ai']:
+                for lvl in range(1, 6):
+                    result[f"{dtype}_lvl{lvl}"] = 0
+            return result
+
+    async def get_hired_drones(self, user_id: int) -> Dict:
+        """
+        Получить данные о дронах В НАЙМЕ (работающих).
+        
+        Returns:
+            Dict с полями: base_lvl1...ai_lvl5
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            async with db.execute(
+                "SELECT * FROM hired_drones WHERE user_id = ?",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+            
+            if row:
+                return dict(row)
+            
+            # Создаём запись если нет
+            await db.execute(
+                "INSERT OR IGNORE INTO hired_drones (user_id) VALUES (?)",
+                (user_id,)
+            )
+            await db.commit()
+            
+            result = {'user_id': user_id}
+            for dtype in ['base', 'miner', 'laser', 'quantum', 'ai']:
+                for lvl in range(1, 6):
+                    result[f"{dtype}_lvl{lvl}"] = 0
+            return result
+
+    async def get_drone_status(self, user_id: int) -> Dict:
+        """
+        Получить полный статус дронов пользователя.
+        
+        Returns:
+            Dict с ключами: in_angar, hired, drones_hired, hired_until,
             storage_metal, storage_crystal, storage_dark, has_premium
         """
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             
-            # Получаем данные пользователя
+            # Данные пользователя
             async with db.execute(
                 """SELECT drones_hired, hired_until, last_update,
                           storage_metal, storage_crystal, storage_dark, 
@@ -1548,27 +1641,35 @@ class DatabaseManager:
             
             result = dict(user_row)
             
-            # Получаем количество дронов
+            # Дроны в ангаре
             async with db.execute(
                 "SELECT * FROM user_drones WHERE user_id = ?",
                 (user_id,)
             ) as cursor:
-                drones_row = await cursor.fetchone()
+                angar_row = await cursor.fetchone()
             
-            if drones_row:
-                result.update(dict(drones_row))
+            if angar_row:
+                result['in_angar'] = dict(angar_row)
             else:
-                # Создаём запись если нет
-                await db.execute(
-                    "INSERT OR IGNORE INTO user_drones (user_id) VALUES (?)",
-                    (user_id,)
-                )
-                await db.commit()
-                
-                # Заполняем нулями
+                result['in_angar'] = {}
                 for dtype in ['base', 'miner', 'laser', 'quantum', 'ai']:
                     for lvl in range(1, 6):
-                        result[f"{dtype}_lvl{lvl}"] = 0
+                        result['in_angar'][f"{dtype}_lvl{lvl}"] = 0
+            
+            # Дроны в найме
+            async with db.execute(
+                "SELECT * FROM hired_drones WHERE user_id = ?",
+                (user_id,)
+            ) as cursor:
+                hired_row = await cursor.fetchone()
+            
+            if hired_row:
+                result['hired'] = dict(hired_row)
+            else:
+                result['hired'] = {}
+                for dtype in ['base', 'miner', 'laser', 'quantum', 'ai']:
+                    for lvl in range(1, 6):
+                        result['hired'][f"{dtype}_lvl{lvl}"] = 0
             
             return result
 
@@ -1678,11 +1779,9 @@ class DatabaseManager:
 
     async def hire_drone(self, user_id: int, drone_type: str, level: int, count: int = 1) -> Dict:
         """
-        Нанять дронов (перевести в найм).
+        Нанять дронов (перевести из ангара в найм).
         
-        Note: В ТЗ дроны не перемещаются между таблицами, 
-        drones_hired = общее количество работающих.
-        Для упрощения считаем что все дроны в ангаре = свободные.
+        Дроны перемещаются из user_drones в hired_drones.
         
         Returns:
             Dict с ключами: success, error, count
@@ -1693,7 +1792,7 @@ class DatabaseManager:
             try:
                 db.row_factory = aiosqlite.Row
                 
-                # Получаем текущее состояние
+                # Получаем текущее количество в найме
                 async with db.execute(
                     "SELECT drones_hired FROM users WHERE user_id = ?",
                     (user_id,)
@@ -1709,27 +1808,43 @@ class DatabaseManager:
                 if free_slots <= 0:
                     return {"success": False, "error": f"Достигнут лимит найма ({MAX_HIRED_DRONES}/{MAX_HIRED_DRONES})"}
                 
-                # Получаем количество дронов
+                # Получаем количество дронов в ангаре
                 key = f"{drone_type}_lvl{level}"
                 async with db.execute(
                     f"SELECT {key} FROM user_drones WHERE user_id = ?",
                     (user_id,)
                 ) as cursor:
-                    drones_row = await cursor.fetchone()
+                    angar_row = await cursor.fetchone()
                 
-                available = drones_row[key] if drones_row else 0
+                if not angar_row:
+                    # Создаём запись
+                    await db.execute("INSERT OR IGNORE INTO user_drones (user_id) VALUES (?)", (user_id,))
+                    await db.commit()
+                    available = 0
+                else:
+                    available = angar_row[key] or 0
                 
                 can_hire = min(count, available, free_slots)
                 
                 if can_hire == 0:
-                    return {"success": False, "error": "Недостаточно свободных дронов"}
+                    if available == 0:
+                        return {"success": False, "error": "Недостаточно свободных дронов в ангаре"}
+                    return {"success": False, "error": f"Недостаточно свободных слотов. Доступно: {free_slots}"}
                 
-                # Обновляем
+                # Уменьшаем в ангаре
                 await db.execute(
                     f"UPDATE user_drones SET {key} = {key} - ? WHERE user_id = ?",
                     (can_hire, user_id)
                 )
                 
+                # Увеличиваем в найме
+                await db.execute(
+                    f"INSERT INTO hired_drones (user_id, {key}) VALUES (?, ?) "
+                    f"ON CONFLICT(user_id) DO UPDATE SET {key} = {key} + ?",
+                    (user_id, can_hire, can_hire)
+                )
+                
+                # Обновляем счётчик
                 await db.execute(
                     "UPDATE users SET drones_hired = drones_hired + ? WHERE user_id = ?",
                     (can_hire, user_id)
@@ -1744,6 +1859,8 @@ class DatabaseManager:
                 }
             except Exception as e:
                 print(f"Error hiring drone: {e}")
+                import traceback
+                traceback.print_exc()
                 return {"success": False, "error": str(e)}
 
     async def upgrade_drone(self, user_id: int, drone_type: str, current_level: int, count: int = 1) -> Dict:
@@ -1866,11 +1983,13 @@ class DatabaseManager:
         """
         Отправить всех свободных дронов на миссию (2 часа).
         
+        Все дроны из ангара перемещаются в найм.
+        
         Returns:
             Dict с ключами: success, error, drones_sent, hired_until
         """
         from datetime import datetime, timedelta
-        from game.drones import MISSION_DURATION_MINUTES
+        from game.drones import MISSION_DURATION_MINUTES, DroneSystem
         
         async with aiosqlite.connect(self.db_path) as db:
             try:
@@ -1878,15 +1997,8 @@ class DatabaseManager:
                 
                 # Получаем текущее состояние
                 async with db.execute(
-                    """SELECT u.drones_hired, u.hired_until, u.storage_metal, u.storage_crystal, u.storage_dark,
-                              ud.base_lvl1, ud.base_lvl2, ud.base_lvl3, ud.base_lvl4, ud.base_lvl5,
-                              ud.miner_lvl1, ud.miner_lvl2, ud.miner_lvl3, ud.miner_lvl4, ud.miner_lvl5,
-                              ud.laser_lvl1, ud.laser_lvl2, ud.laser_lvl3, ud.laser_lvl4, ud.laser_lvl5,
-                              ud.quantum_lvl1, ud.quantum_lvl2, ud.quantum_lvl3, ud.quantum_lvl4, ud.quantum_lvl5,
-                              ud.ai_lvl1, ud.ai_lvl2, ud.ai_lvl3, ud.ai_lvl4, ud.ai_lvl5
-                       FROM users u
-                       LEFT JOIN user_drones ud ON u.user_id = ud.user_id
-                       WHERE u.user_id = ?""",
+                    """SELECT u.drones_hired, u.hired_until, u.storage_metal, u.storage_crystal, u.storage_dark
+                       FROM users u WHERE u.user_id = ?""",
                     (user_id,)
                 ) as cursor:
                     row = await cursor.fetchone()
@@ -1895,27 +2007,65 @@ class DatabaseManager:
                     return {"success": False, "error": "Пользователь не найден"}
                 
                 # Проверяем, есть ли ресурсы в хранилище
-                if row['storage_metal'] > 0 or row['storage_crystal'] > 0 or row['storage_dark'] > 0:
+                if (row['storage_metal'] or 0) > 0 or (row['storage_crystal'] or 0) > 0 or (row['storage_dark'] or 0) > 0:
                     return {"success": False, "error": "Сначала соберите ресурсы"}
                 
                 # Проверяем, не в полёте ли уже
                 if row['hired_until']:
-                    hired_until = datetime.fromisoformat(row['hired_until'])
-                    if datetime.now() < hired_until:
-                        return {"success": False, "error": "Дроны уже в полёте"}
+                    try:
+                        hired_until = datetime.fromisoformat(row['hired_until'])
+                        if datetime.now() < hired_until:
+                            return {"success": False, "error": "Дроны уже в полёте"}
+                    except:
+                        pass
                 
-                # Считаем свободных дронов
-                drones_in_angar = 0
-                for dtype in ['base', 'miner', 'laser', 'quantum', 'ai']:
-                    for lvl in range(1, 6):
-                        drones_in_angar += row[f"{dtype}_lvl{lvl}"] or 0
+                # Получаем дроны в ангаре
+                async with db.execute(
+                    "SELECT * FROM user_drones WHERE user_id = ?",
+                    (user_id,)
+                ) as cursor:
+                    angar_row = await cursor.fetchone()
+                
+                if not angar_row:
+                    return {"success": False, "error": "Нет свободных дронов"}
+                
+                angar_data = dict(angar_row)
+                
+                # Считаем дронов в ангаре
+                drones_in_angar = DroneSystem.calculate_total_drones(angar_data)
                 
                 if drones_in_angar == 0:
                     return {"success": False, "error": "Нет свободных дронов"}
                 
-                # Отправляем
+                # Проверяем лимит найма
+                current_hired = row['drones_hired'] or 0
+                if current_hired + drones_in_angar > 50:
+                    free_slots = 50 - current_hired
+                    return {"success": False, "error": f"Недостаточно слотов найма. Доступно: {free_slots}"}
+                
+                # Перемещаем дронов из ангара в найм
+                for dtype in ['base', 'miner', 'laser', 'quantum', 'ai']:
+                    for lvl in range(1, 6):
+                        key = f"{dtype}_lvl{lvl}"
+                        count = angar_data.get(key, 0) or 0
+                        
+                        if count > 0:
+                            # Добавляем в hired_drones
+                            await db.execute(
+                                f"INSERT INTO hired_drones (user_id, {key}) VALUES (?, ?) "
+                                f"ON CONFLICT(user_id) DO UPDATE SET {key} = {key} + ?",
+                                (user_id, count, count)
+                            )
+                            
+                            # Убираем из user_drones
+                            await db.execute(
+                                f"UPDATE user_drones SET {key} = 0 WHERE user_id = ?",
+                                (user_id,)
+                            )
+                
+                # Обновляем время миссии
                 hired_until = datetime.now() + timedelta(minutes=MISSION_DURATION_MINUTES)
-                new_hired = (row['drones_hired'] or 0) + drones_in_angar
+                new_hired = current_hired + drones_in_angar
                 
                 await db.execute(
                     """UPDATE users SET 
@@ -1924,18 +2074,6 @@ class DatabaseManager:
                        last_update = ?
                        WHERE user_id = ?""",
                     (new_hired, hired_until.isoformat(), datetime.now().isoformat(), user_id)
-                )
-                
-                # Обнуляем дронов в ангаре (они теперь в найме)
-                await db.execute(
-                    """UPDATE user_drones SET 
-                       base_lvl1=0, base_lvl2=0, base_lvl3=0, base_lvl4=0, base_lvl5=0,
-                       miner_lvl1=0, miner_lvl2=0, miner_lvl3=0, miner_lvl4=0, miner_lvl5=0,
-                       laser_lvl1=0, laser_lvl2=0, laser_lvl3=0, laser_lvl4=0, laser_lvl5=0,
-                       quantum_lvl1=0, quantum_lvl2=0, quantum_lvl3=0, quantum_lvl4=0, quantum_lvl5=0,
-                       ai_lvl1=0, ai_lvl2=0, ai_lvl3=0, ai_lvl4=0, ai_lvl5=0
-                       WHERE user_id = ?""",
-                    (user_id,)
                 )
                 
                 await db.commit()
@@ -1948,23 +2086,27 @@ class DatabaseManager:
                 }
             except Exception as e:
                 print(f"Error sending drones: {e}")
+                import traceback
+                traceback.print_exc()
                 return {"success": False, "error": str(e)}
 
     async def update_drone_storage(self, user_id: int) -> Dict:
         """
         Обновить хранилище дронов (добавить накопленный доход).
         
+        Доход считается от дронов в hired_drones.
+        
         Returns:
             Dict с накопленным доходом
         """
-        from datetime import datetime
-        from game.drones import DroneSystem, MAX_HIRED_DRONES
+        from datetime import datetime, timedelta
+        from game.drones import DroneSystem, MISSION_DURATION_MINUTES
         
         async with aiosqlite.connect(self.db_path) as db:
             try:
                 db.row_factory = aiosqlite.Row
                 
-                # Получаем данные
+                # Получаем данные пользователя
                 async with db.execute(
                     """SELECT drones_hired, hired_until, last_update, 
                               storage_metal, storage_crystal, storage_dark
@@ -1976,43 +2118,54 @@ class DatabaseManager:
                 if not row or not row['drones_hired']:
                     return {"metal": 0, "crystals": 0, "dark_matter": 0, "minutes_passed": 0}
                 
-                # Проверяем статус миссии
+                # Получаем дронов в найме
+                async with db.execute(
+                    "SELECT * FROM hired_drones WHERE user_id = ?",
+                    (user_id,)
+                ) as cursor:
+                    hired_row = await cursor.fetchone()
+                
+                if not hired_row:
+                    return {"metal": 0, "crystals": 0, "dark_matter": 0, "minutes_passed": 0}
+                
+                hired_data = dict(hired_row)
+                
+                # Определяем сколько минут прошло
                 hired_until_str = row['hired_until']
+                last_update_str = row['last_update']
+                
+                now = datetime.now()
+                
                 if hired_until_str:
                     hired_until = datetime.fromisoformat(hired_until_str)
-                    now = datetime.now()
                     
-                    # Если миссия закончилась, считаем только до момента окончания
+                    # Если миссия закончилась
                     if now > hired_until:
-                        last_update_str = row['last_update']
-                        last_update = datetime.fromisoformat(last_update_str) if last_update_str else hired_until
+                        # Считаем до момента окончания миссии
+                        if last_update_str:
+                            last_update = datetime.fromisoformat(last_update_str)
+                        else:
+                            last_update = hired_until - timedelta(minutes=MISSION_DURATION_MINUTES)
                         
-                        # Считаем до hired_until
                         minutes_passed = int((hired_until - last_update).total_seconds() / 60)
-                        minutes_passed = max(0, min(minutes_passed, 120))  # Максимум 2 часа
+                        minutes_passed = max(0, min(minutes_passed, MISSION_DURATION_MINUTES))
                     else:
-                        last_update_str = row['last_update']
-                        last_update = datetime.fromisoformat(last_update_str) if last_update_str else now
+                        # Миссия ещё активна
+                        if last_update_str:
+                            last_update = datetime.fromisoformat(last_update_str)
+                        else:
+                            last_update = now
+                        
                         minutes_passed = int((now - last_update).total_seconds() / 60)
+                        minutes_passed = max(0, min(minutes_passed, MISSION_DURATION_MINUTES))
                 else:
                     return {"metal": 0, "crystals": 0, "dark_matter": 0, "minutes_passed": 0}
                 
                 if minutes_passed <= 0:
                     return {"metal": 0, "crystals": 0, "dark_matter": 0, "minutes_passed": 0}
                 
-                # Получаем данные о дронах (для расчёта дохода)
-                # Note: в упрощённой версии берём средний доход
-                # В полной версии нужно хранить какие дроны в найме
-                async with db.execute(
-                    """SELECT * FROM user_drones WHERE user_id = ?""",
-                    (user_id,)
-                ) as cursor:
-                    drones_row = await cursor.fetchone()
-                
-                drones_data = dict(drones_row) if drones_row else {}
-                
-                # Рассчитываем доход (упрощённо - все дроны работают)
-                income_per_minute = DroneSystem.calculate_income_per_minute(drones_data, row['drones_hired'])
+                # Считаем доход от дронов в найме
+                income_per_minute = DroneSystem.calculate_income_per_minute(hired_data, row['drones_hired'])
                 
                 accumulated = {
                     'metal': income_per_minute['metal'] * minutes_passed,
@@ -2050,11 +2203,63 @@ class DatabaseManager:
                 }
             except Exception as e:
                 print(f"Error updating storage: {e}")
+                import traceback
+                traceback.print_exc()
                 return {"metal": 0, "crystals": 0, "dark_matter": 0, "minutes_passed": 0}
+
+    async def release_hired_drones(self, user_id: int) -> bool:
+        """
+        Вернуть всех дронов из найма в ангар.
+        
+        Используется при сборе ресурсов после окончания миссии.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                # Получаем дронов в найме
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT * FROM hired_drones WHERE user_id = ?",
+                    (user_id,)
+                ) as cursor:
+                    hired_row = await cursor.fetchone()
+                
+                if not hired_row:
+                    return True
+                
+                hired_data = dict(hired_row)
+                
+                # Перемещаем обратно в ангар
+                for dtype in ['base', 'miner', 'laser', 'quantum', 'ai']:
+                    for lvl in range(1, 6):
+                        key = f"{dtype}_lvl{lvl}"
+                        count = hired_data.get(key, 0) or 0
+                        
+                        if count > 0:
+                            # Добавляем в ангар
+                            await db.execute(
+                                f"INSERT INTO user_drones (user_id, {key}) VALUES (?, ?) "
+                                f"ON CONFLICT(user_id) DO UPDATE SET {key} = {key} + ?",
+                                (user_id, count, count)
+                            )
+                            
+                            # Очищаем hired_drones
+                            await db.execute(
+                                f"UPDATE hired_drones SET {key} = 0 WHERE user_id = ?",
+                                (user_id,)
+                            )
+                
+                await db.commit()
+                return True
+            except Exception as e:
+                print(f"Error releasing drones: {e}")
+                return False
 
     async def collect_drone_storage(self, user_id: int) -> Dict:
         """
         Собрать ресурсы из хранилища дронов.
+        
+        Если миссия закончилась - дроны возвращаются в ангар.
+        Если прошло более 24 часов - ресурсы сгорают.
         
         Returns:
             Dict с ключами: success, error, collected
@@ -2092,15 +2297,23 @@ class DatabaseManager:
                 
                 # Проверяем правило 24 часов
                 should_clear = False
-                if row['hired_until']:
-                    hired_until = datetime.fromisoformat(row['hired_until'])
-                    hours_passed = (datetime.now() - hired_until).total_seconds() / 3600
-                    
-                    if hours_passed >= 24:
-                        should_clear = True
-                        collected = {'metal': 0, 'crystals': 0, 'dark_matter': 0}
+                mission_ended = False
                 
-                # Добавляем ресурсы на баланс
+                if row['hired_until']:
+                    try:
+                        hired_until = datetime.fromisoformat(row['hired_until'])
+                        hours_passed = (datetime.now() - hired_until).total_seconds() / 3600
+                        
+                        if datetime.now() > hired_until:
+                            mission_ended = True
+                        
+                        if hours_passed >= 24:
+                            should_clear = True
+                            collected = {'metal': 0, 'crystals': 0, 'dark_matter': 0}
+                    except:
+                        pass
+                
+                # Добавляем ресурсы на баланс (если не сгорели)
                 if not should_clear:
                     await db.execute(
                         """UPDATE users SET 
@@ -2122,29 +2335,59 @@ class DatabaseManager:
                     (datetime.now().isoformat(), user_id)
                 )
                 
-                # Если миссия закончилась и ресурсы собраны - возвращаем дронов
-                if row['hired_until']:
-                    hired_until = datetime.fromisoformat(row['hired_until'])
-                    if datetime.now() > hired_until:
-                        # Возвращаем дронов в ангар (упрощённо - просто сбрасываем hired)
-                        # В полной версии нужно вернуть дронов в user_drones
-                        await db.execute(
-                            """UPDATE users SET 
-                               drones_hired = 0,
-                               hired_until = NULL
-                               WHERE user_id = ?""",
-                            (user_id,)
-                        )
+                # Если миссия закончилась - возвращаем дронов в ангар
+                if mission_ended:
+                    # Получаем дронов в найме
+                    async with db.execute(
+                        "SELECT * FROM hired_drones WHERE user_id = ?",
+                        (user_id,)
+                    ) as cursor:
+                        hired_row = await cursor.fetchone()
+                    
+                    if hired_row:
+                        hired_data = dict(hired_row)
+                        
+                        # Перемещаем обратно в ангар
+                        for dtype in ['base', 'miner', 'laser', 'quantum', 'ai']:
+                            for lvl in range(1, 6):
+                                key = f"{dtype}_lvl{lvl}"
+                                count = hired_data.get(key, 0) or 0
+                                
+                                if count > 0:
+                                    # Добавляем в ангар
+                                    await db.execute(
+                                        f"INSERT INTO user_drones (user_id, {key}) VALUES (?, ?) "
+                                        f"ON CONFLICT(user_id) DO UPDATE SET {key} = {key} + ?",
+                                        (user_id, count, count)
+                                    )
+                                    
+                                    # Очищаем в найме
+                                    await db.execute(
+                                        f"UPDATE hired_drones SET {key} = 0 WHERE user_id = ?",
+                                        (user_id,)
+                                    )
+                    
+                    # Сбрасываем счётчик найма
+                    await db.execute(
+                        """UPDATE users SET 
+                           drones_hired = 0,
+                           hired_until = NULL
+                           WHERE user_id = ?""",
+                        (user_id,)
+                    )
                 
                 await db.commit()
                 
                 return {
                     "success": True,
                     "collected": collected,
-                    "was_cleared": should_clear
+                    "was_cleared": should_clear,
+                    "drones_returned": mission_ended
                 }
             except Exception as e:
                 print(f"Error collecting storage: {e}")
+                import traceback
+                traceback.print_exc()
                 return {"success": False, "error": str(e)}
 
     async def upgrade_all_drones(self, user_id: int) -> Dict:
@@ -2169,25 +2412,25 @@ class DatabaseManager:
                 
                 if not row or not row['has_premium']:
                     return {"success": False, "error": "Требуется привилегия"}
-                
-                # Получаем дронов
+        
+                # Получаем дронов в ангаре
                 async with db.execute(
                     "SELECT * FROM user_drones WHERE user_id = ?",
                     (user_id,)
                 ) as cursor:
-                    drones_row = await cursor.fetchone()
+                    angar_row = await cursor.fetchone()
                 
-                if not drones_row:
-                    return {"success": True, "upgraded": 0}
+                if not angar_row:
+                    return {"success": True, "upgraded": 0, "message": "Нет дронов для улучшения"}
                 
-                drones_data = dict(drones_row)
+                angar_data = dict(angar_row)
                 total_upgraded = 0
                 
                 # Улучшаем каждый тип дронов
                 for drone_type in DRONE_TYPES:
                     for level in range(1, 5):  # 1-4 уровни можно улучшать
                         key = f"{drone_type}_lvl{level}"
-                        available = drones_data.get(key, 0)
+                        available = angar_data.get(key, 0) or 0
                         
                         while available >= 5:
                             upgrades = available // 5
@@ -2203,16 +2446,21 @@ class DatabaseManager:
                             
                             total_upgraded += upgrades
                             available = available % 5
+                            angar_data[key] = available
                 
                 await db.commit()
                 
                 return {
                     "success": True,
-                    "upgraded": total_upgraded
+                    "upgraded": total_upgraded,
+                    "message": f"Улучшено {total_upgraded} дронов"
                 }
             except Exception as e:
                 print(f"Error upgrading all drones: {e}")
+                import traceback
+                traceback.print_exc()
                 return {"success": False, "error": str(e)}
 
 
 db_manager = DatabaseManager()
+        
