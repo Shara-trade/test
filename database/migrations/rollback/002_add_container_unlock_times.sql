@@ -1,0 +1,2 @@
+-- Rollback for: 002_add_container_unlock_times
+-- No schema changes needed - this was a documentation migration

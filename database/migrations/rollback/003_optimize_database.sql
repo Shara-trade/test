@@ -1,0 +1,2 @@
+-- Rollback for: 003_optimize_database
+-- No schema changes - PRAGMA settings are per-connection
