@@ -9,6 +9,7 @@
 - handlers.py - обработчики (в handlers/admin_panel.py)
 - keyboards.py - клавиатуры
 - middleware.py - Rate Limiting и аудит (пункт 2 ТЗ)
+- formatters.py - форматирование данных (пункт 4 ТЗ)
 
 Примечание: router находится в handlers/admin_panel.py
 """
@@ -42,6 +43,17 @@ from .middleware import (
 from .decorators import (
     admin_required, AdminFilter, require_admin,
     is_admin, check_permission, get_admin_role
+)
+
+# Форматирование (пункт 4 ТЗ)
+from .formatters import (
+    format_number, format_datetime, format_date, format_duration,
+    format_player_card, format_player_short,
+    format_history_event, format_player_history,
+    format_log_entry, format_admin_logs,
+    format_admin_stats, format_realtime_stats,
+    format_preset, format_presets_list,
+    get_timestamp
 )
 
 __all__ = [
@@ -91,4 +103,21 @@ __all__ = [
     'PlayerCardSchema',
     'SuccessResponse',
     'ErrorResponse',
+    
+    # Форматирование
+    'format_number',
+    'format_datetime',
+    'format_date',
+    'format_duration',
+    'format_player_card',
+    'format_player_short',
+    'format_history_event',
+    'format_player_history',
+    'format_log_entry',
+    'format_admin_logs',
+    'format_admin_stats',
+    'format_realtime_stats',
+    'format_preset',
+    'format_presets_list',
+    'get_timestamp',
 ]
