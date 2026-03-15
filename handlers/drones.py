@@ -31,6 +31,7 @@ async def cmd_angar(message: Message):
 async def show_angar(message_or_callback, user_id: int, edit: bool = False):
     """Показать главное меню Ангара"""
     from aiogram.types import Message
+    from datetime import datetime
     
     # Получаем данные пользователя
     user = await db.get_user(user_id)
@@ -45,26 +46,50 @@ async def show_angar(message_or_callback, user_id: int, edit: bool = False):
         user = await db.get_user(user_id)  # Перечитываем
     
     # Получаем данные о дронах
-    drones_data = await db.get_user_drones(user_id)
+    status = await db.get_drone_status(user_id)
     
-    # Считаем общее количество дронов
-    total_drones = DroneSystem.calculate_total_drones(drones_data)
-    drones_hired = user.get('drones_hired', 0)
+    in_angar = status.get('in_angar', {})
+    hired = status.get('hired', {})
+    
+    # Считаем количество дронов
+    total_in_angar = DroneSystem.calculate_total_drones(in_angar)
+    total_hired = DroneSystem.calculate_total_drones(hired)
+    drones_hired = user.get('drones_hired', 0) or total_hired
     
     # Доход в минуту (только от нанятых)
-    income = DroneSystem.calculate_income_per_minute(drones_data, drones_hired)
+    income = DroneSystem.calculate_income_per_minute(hired, drones_hired)
     
     # Формируем текст
     text = (
         f"🚀 <b>Твой ангар:</b>\n"
-        f"🚁 Дронов в ангаре: {total_drones}\n"
-        f"🚁 Дронов в найме: {drones_hired}/{MAX_HIRED_DRONES}\n\n"
-        f"Доход в минуту:\n"
+        f"🚁 Дронов в ангаре: {total_in_angar}\n"
+        f"🚁 Дронов в найме: {drones_hired}/{MAX_HIRED_DRONES}"
+    )
+
+    # Показываем время миссии если активно
+    hired_until = user.get('hired_until')
+    if hired_until and drones_hired > 0:
+        try:
+            hired_until_dt = datetime.fromisoformat(hired_until)
+            now = datetime.now()
+            
+            if now < hired_until_dt:
+                remaining = int((hired_until_dt - now).total_seconds() / 60)
+                hours = remaining // 60
+                minutes = remaining % 60
+                text += f" (⏱ {hours}ч {minutes}мин)"
+            else:
+                text += " (✅ готовы к сбору)"
+        except:
+            pass
+    
+    text += (
+        f"\n\nДоход в минуту:\n"
         f"▸ ⚙️ Металл: {income['metal']:,}\n"
         f"▸ 💎 Кристаллы: {income['crystals']:,}\n"
         f"▸ 🕳️ Тёмная материя: {income['dark_matter']:,}"
     )
-
+    
     # Хранилище
     storage_metal = user.get('storage_metal', 0) or 0
     storage_crystal = user.get('storage_crystal', 0) or 0
@@ -72,26 +97,37 @@ async def show_angar(message_or_callback, user_id: int, edit: bool = False):
     
     if storage_metal > 0 or storage_crystal > 0 or storage_dark > 0:
         text += (
-            f"\n\nХранилище дронов:\n"
+            f"\n\n<b>Хранилище дронов:</b>\n"
             f"▸ ⚙️ Металл: {storage_metal:,}\n"
             f"▸ 💎 Кристаллы: {storage_crystal:,}\n"
             f"▸ 🕳️ Тёмная материя: {storage_dark:,}"
         )
     
+        # Предупреждение о сгорании
+        if hired_until:
+            try:
+                hired_until_dt = datetime.fromisoformat(hired_until)
+                hours_passed = (datetime.now() - hired_until_dt).total_seconds() / 3600
+                if hours_passed > 12:
+                    hours_left = max(0, 24 - hours_passed)
+                    text += f"\n\n⚠️ <i>Ресурсы сгорят через {int(hours_left)}ч</i>"
+            except:
+                pass
+    
     # Клавиатура
     keyboard = []
-
+    
     # Кнопка "Собрать" если есть ресурсы в хранилище
     if storage_metal > 0 or storage_crystal > 0 or storage_dark > 0:
         keyboard.append([
             InlineKeyboardButton(text="📥 Собрать", callback_data="drone_collect")
         ])
-    # Кнопка "Отправить" если есть свободные дроны и нет активной миссии
-    elif total_drones > 0 and drones_hired == 0:
+    # Кнопка "Отправить" если есть свободные дроны
+    elif total_in_angar > 0:
         keyboard.append([
             InlineKeyboardButton(text="🚀 Отправить", callback_data="drone_send")
         ])
-
+        
     keyboard.extend([
         [
             InlineKeyboardButton(text="🤖 Дроны", callback_data="drone_types"),
@@ -101,7 +137,7 @@ async def show_angar(message_or_callback, user_id: int, edit: bool = False):
             InlineKeyboardButton(text="❌ Закрыть", callback_data="drone_close")
         ]
     ])
-
+    
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
     if edit and hasattr(message_or_callback, 'edit_text'):
@@ -138,25 +174,31 @@ async def on_drone_types(callback: CallbackQuery):
     user_id = callback.from_user.id
     
     # Получаем данные
-    drones_data = await db.get_user_drones(user_id)
+    status = await db.get_drone_status(user_id)
     user = await db.get_user(user_id)
     has_premium = user.get('has_premium', 0) if user else 0
     
-    text = "🤖 <b>Дроны:</b>"
+    in_angar = status.get('in_angar', {})
+    hired = status.get('hired', {})
+    
+    text = "🤖 <b>Дроны:</b>\n\n"
+    text += "<i>В ангаре | В найме</i>\n"
     
     keyboard = []
     
     for drone_type in DRONE_TYPES:
         config = DRONE_CONFIG[drone_type]
         
-        # Считаем количество дронов этого типа
-        count = 0
+        # Считаем количество дронов этого типа в ангаре и в найме
+        count_angar = 0
+        count_hired = 0
         for lvl in range(1, 6):
-            count += drones_data.get(f"{drone_type}_lvl{lvl}", 0)
+            count_angar += in_angar.get(f"{drone_type}_lvl{lvl}", 0)
+            count_hired += hired.get(f"{drone_type}_lvl{lvl}", 0)
         
         keyboard.append([
             InlineKeyboardButton(
-                text=f"{config['emoji']} {config['name']} ({count})",
+                text=f"{config['emoji']} {config['name']} ({count_angar} | {count_hired})",
                 callback_data=f"drone_card_{drone_type}_1"
             )
         ])
@@ -190,7 +232,10 @@ async def on_drone_card(callback: CallbackQuery):
     level = int(parts[3])
     
     user_id = callback.from_user.id
-    drones_data = await db.get_user_drones(user_id)
+    status = await db.get_drone_status(user_id)
+    
+    in_angar = status.get('in_angar', {})
+    hired = status.get('hired', {})
     
     config = DRONE_CONFIG.get(drone_type)
     if not config:
@@ -198,7 +243,10 @@ async def on_drone_card(callback: CallbackQuery):
         return
     
     # Данные дрона
-    count = drones_data.get(f"{drone_type}_lvl{level}", 0)
+    count_angar = in_angar.get(f"{drone_type}_lvl{level}", 0)
+    count_hired = hired.get(f"{drone_type}_lvl{level}", 0)
+    total_count = count_angar + count_hired
+    
     income = DroneSystem.get_income(drone_type, level)
     slots = DroneSystem.get_module_slots(level)
     emoji = DroneSystem.get_level_emoji(level)
@@ -218,8 +266,12 @@ async def on_drone_card(callback: CallbackQuery):
         f"▸ Уровень: {level}\n"
         f"▸ Доход: {income_text}\n"
         f"▸ Слотов модулей: {slots} 🧩\n"
-        f"▸ Количество: {count}"
+        f"▸ Количество: {total_count}"
     )
+    
+    # Показываем детализацию если есть дроны
+    if total_count > 0:
+        text += f" (в ангаре: {count_angar}, в найме: {count_hired})"
     
     # Клавиатура
     keyboard = []
@@ -227,33 +279,40 @@ async def on_drone_card(callback: CallbackQuery):
     # Навигация по уровням
     nav_buttons = []
     
+    # Кнопка "«" - предыдущий уровень
     if level > 1:
+        prev_count = in_angar.get(f"{drone_type}_lvl{level-1}", 0) + hired.get(f"{drone_type}_lvl{level-1}", 0)
+        if prev_count > 0:
+            nav_buttons.append(
+                InlineKeyboardButton(text="«", callback_data=f"drone_card_{drone_type}_{level-1}")
+            )
+    
+    # Кнопки действий (только для дронов в ангаре)
+    if count_angar > 0:
         nav_buttons.append(
-            InlineKeyboardButton(text="«", callback_data=f"drone_card_{drone_type}_{level-1}")
+            InlineKeyboardButton(text="🤚", callback_data=f"drone_hire_{drone_type}_{level}")
         )
     
-    # Кнопки действий
-    nav_buttons.append(
-        InlineKeyboardButton(text="🤚", callback_data=f"drone_hire_{drone_type}_{level}")
-    )
-    nav_buttons.append(
-        InlineKeyboardButton(text="💰", callback_data=f"drone_sell_{drone_type}_{level}")
-    )
+    if count_angar > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(text="💰", callback_data=f"drone_sell_{drone_type}_{level}")
+        )
     
-    if level < MAX_DRONE_LEVEL:
+    if count_angar >= 5 and level < MAX_DRONE_LEVEL:
         nav_buttons.append(
             InlineKeyboardButton(text="⭐️", callback_data=f"drone_upgrade_menu_{drone_type}_{level}")
         )
     
+    # Кнопка "»" - следующий уровень
     if level < MAX_DRONE_LEVEL:
-        # Проверяем есть ли дроны следующего уровня
-        next_count = drones_data.get(f"{drone_type}_lvl{level+1}", 0)
+        next_count = in_angar.get(f"{drone_type}_lvl{level+1}", 0) + hired.get(f"{drone_type}_lvl{level+1}", 0)
         if next_count > 0:
             nav_buttons.append(
                 InlineKeyboardButton(text="»", callback_data=f"drone_card_{drone_type}_{level+1}")
             )
     
-    keyboard.append(nav_buttons)
+    if nav_buttons:
+        keyboard.append(nav_buttons)
     
     keyboard.append([
         InlineKeyboardButton(text="◀️ Назад", callback_data="drone_types"),
@@ -331,29 +390,32 @@ async def show_shop_drone(message, user_id: int, drone_type: str, edit: bool = F
     
     keyboard = []
     
-    # Навигация
+    # Навигация по кругу
     nav_buttons = []
-    if current_idx > 0:
-        nav_buttons.append(
-            InlineKeyboardButton(text="«", callback_data=f"drone_shop_{DRONE_TYPES[current_idx-1]}")
-        )
+    
+    # Кнопка "«" - предыдущий тип
+    prev_idx = (current_idx - 1) % len(DRONE_TYPES)
+    nav_buttons.append(
+        InlineKeyboardButton(text="«", callback_data=f"drone_shop_{DRONE_TYPES[prev_idx]}")
+    )
     
     nav_buttons.append(
         InlineKeyboardButton(text="🛒 Купить", callback_data=f"drone_buy_{drone_type}_1")
     )
     
-    if current_idx < len(DRONE_TYPES) - 1:
-        nav_buttons.append(
-            InlineKeyboardButton(text="»", callback_data=f"drone_shop_{DRONE_TYPES[current_idx+1]}")
-        )
+    # Кнопка "»" - следующий тип
+    next_idx = (current_idx + 1) % len(DRONE_TYPES)
+    nav_buttons.append(
+        InlineKeyboardButton(text="»", callback_data=f"drone_shop_{DRONE_TYPES[next_idx]}")
+    )
     
     keyboard.append(nav_buttons)
     
-    # Множители
+    # Множители покупки
     keyboard.append([
-        InlineKeyboardButton(text="x5", callback_data=f"drone_buy_{drone_type}_5"),
-        InlineKeyboardButton(text="x10", callback_data=f"drone_buy_{drone_type}_10"),
-        InlineKeyboardButton(text="x50", callback_data=f"drone_buy_{drone_type}_50")
+        InlineKeyboardButton(text="х5", callback_data=f"drone_buy_{drone_type}_5"),
+        InlineKeyboardButton(text="х10", callback_data=f"drone_buy_{drone_type}_10"),
+        InlineKeyboardButton(text="х50", callback_data=f"drone_buy_{drone_type}_50")
     ])
     
     keyboard.append([
@@ -404,12 +466,14 @@ async def on_drone_hire_menu(callback: CallbackQuery):
     level = int(parts[3])
     
     user_id = callback.from_user.id
-    drones_data = await db.get_user_drones(user_id)
+    status = await db.get_drone_status(user_id)
     user = await db.get_user(user_id)
+    
+    in_angar = status.get('in_angar', {})
     
     config = DRONE_CONFIG.get(drone_type)
     income = DroneSystem.get_income(drone_type, level)
-    available = drones_data.get(f"{drone_type}_lvl{level}", 0)
+    available = in_angar.get(f"{drone_type}_lvl{level}", 0)
     drones_hired = user.get('drones_hired', 0) if user else 0
     free_slots = MAX_HIRED_DRONES - drones_hired
     
@@ -430,23 +494,29 @@ async def on_drone_hire_menu(callback: CallbackQuery):
         f"{emoji} {config['name']}\n"
         f"▸ Уровень: {level}\n"
         f"▸ Доход: {income_text}\n\n"
-        f"Доступно: {available}\n"
-        f"Свободных слотов: {free_slots}"
+        f"Доступно в ангаре: {available}\n"
+        f"Свободных слотов найма: {free_slots}"
     )
     
-    keyboard = [
-        [
-            InlineKeyboardButton(text="✅ Нанять", callback_data=f"drone_hire_do_{drone_type}_{level}_1")
-        ],
-        [
-            InlineKeyboardButton(text="x5", callback_data=f"drone_hire_do_{drone_type}_{level}_5"),
-            InlineKeyboardButton(text="x10", callback_data=f"drone_hire_do_{drone_type}_{level}_10"),
-            InlineKeyboardButton(text="Всё", callback_data=f"drone_hire_do_{drone_type}_{level}_all")
-        ],
-        [
-            InlineKeyboardButton(text="◀️ Назад", callback_data=f"drone_card_{drone_type}_{level}")
-        ]
-    ]
+    keyboard = []
+    
+    if available > 0 and free_slots > 0:
+        keyboard.append([
+            InlineKeyboardButton(text="Нанять", callback_data=f"drone_hire_do_{drone_type}_{level}_1")
+        ])
+        
+        hire_buttons = []
+        if available >= 5 and free_slots >= 5:
+            hire_buttons.append(InlineKeyboardButton(text="х5", callback_data=f"drone_hire_do_{drone_type}_{level}_5"))
+        if available >= 10 and free_slots >= 10:
+            hire_buttons.append(InlineKeyboardButton(text="х10", callback_data=f"drone_hire_do_{drone_type}_{level}_10"))
+        hire_buttons.append(InlineKeyboardButton(text="Всё", callback_data=f"drone_hire_do_{drone_type}_{level}_all"))
+        
+        keyboard.append(hire_buttons)
+    
+    keyboard.append([
+        InlineKeyboardButton(text="◀️ Назад", callback_data=f"drone_card_{drone_type}_{level}")
+    ])
     
     await callback.message.edit_text(
         text,
@@ -468,9 +538,11 @@ async def on_drone_hire_do(callback: CallbackQuery):
     
     if count_str == 'all':
         # Найм всех доступных
-        drones_data = await db.get_user_drones(user_id)
+        status = await db.get_drone_status(user_id)
         user = await db.get_user(user_id)
-        available = drones_data.get(f"{drone_type}_lvl{level}", 0)
+        
+        in_angar = status.get('in_angar', {})
+        available = in_angar.get(f"{drone_type}_lvl{level}", 0)
         drones_hired = user.get('drones_hired', 0) if user else 0
         free_slots = MAX_HIRED_DRONES - drones_hired
         count = min(available, free_slots)
@@ -482,7 +554,8 @@ async def on_drone_hire_do(callback: CallbackQuery):
     if result['success']:
         hired = result['count']
         await callback.answer(f"✅ Нанято дронов: {hired}", show_alert=True)
-        # Возвращаемся к карточке
+        # Возвращаемся к карточке - имитируем callback
+        callback.data = f"drone_card_{drone_type}_{level}"
         await on_drone_card(callback)
     else:
         await callback.answer(f"❌ {result['error']}", show_alert=True)
@@ -498,10 +571,11 @@ async def on_drone_sell_menu(callback: CallbackQuery):
     level = int(parts[3])
     
     user_id = callback.from_user.id
-    drones_data = await db.get_user_drones(user_id)
+    status = await db.get_drone_status(user_id)
     
+    in_angar = status.get('in_angar', {})
     config = DRONE_CONFIG.get(drone_type)
-    available = drones_data.get(f"{drone_type}_lvl{level}", 0)
+    available = in_angar.get(f"{drone_type}_lvl{level}", 0)
     sell_price = DroneSystem.get_sell_price(drone_type, level)
     
     # Формируем текст цены
@@ -519,23 +593,29 @@ async def on_drone_sell_menu(callback: CallbackQuery):
     text = (
         f"💰 <b>Продажа дрона:</b>\n"
         f"{emoji} {config['name']}\n"
-        f"▸ Количество: {available}\n"
+        f"▸ В ангаре: {available}\n"
         f"▸ Цена: {price_text} за 1 дрон (30%)"
     )
     
-    keyboard = [
-        [
-            InlineKeyboardButton(text="💰 Продать", callback_data=f"drone_sell_do_{drone_type}_{level}_1")
-        ],
-        [
-            InlineKeyboardButton(text="x5", callback_data=f"drone_sell_do_{drone_type}_{level}_5"),
-            InlineKeyboardButton(text="x10", callback_data=f"drone_sell_do_{drone_type}_{level}_10"),
-            InlineKeyboardButton(text="Всё", callback_data=f"drone_sell_do_{drone_type}_{level}_all")
-        ],
-        [
-            InlineKeyboardButton(text="◀️ Назад", callback_data=f"drone_card_{drone_type}_{level}")
-        ]
-    ]
+    keyboard = []
+    
+    if available > 0:
+        keyboard.append([
+            InlineKeyboardButton(text="Продать", callback_data=f"drone_sell_do_{drone_type}_{level}_1")
+        ])
+        
+        sell_buttons = []
+        if available >= 5:
+            sell_buttons.append(InlineKeyboardButton(text="х5", callback_data=f"drone_sell_do_{drone_type}_{level}_5"))
+        if available >= 10:
+            sell_buttons.append(InlineKeyboardButton(text="х10", callback_data=f"drone_sell_do_{drone_type}_{level}_10"))
+        sell_buttons.append(InlineKeyboardButton(text="Всё", callback_data=f"drone_sell_do_{drone_type}_{level}_all"))
+        
+        keyboard.append(sell_buttons)
+    
+    keyboard.append([
+        InlineKeyboardButton(text="◀️ Назад", callback_data=f"drone_card_{drone_type}_{level}")
+    ])
     
     await callback.message.edit_text(
         text,
@@ -556,8 +636,9 @@ async def on_drone_sell_do(callback: CallbackQuery):
     user_id = callback.from_user.id
     
     if count_str == 'all':
-        drones_data = await db.get_user_drones(user_id)
-        count = drones_data.get(f"{drone_type}_lvl{level}", 0)
+        status = await db.get_drone_status(user_id)
+        in_angar = status.get('in_angar', {})
+        count = in_angar.get(f"{drone_type}_lvl{level}", 0)
     else:
         count = int(count_str)
     
@@ -569,6 +650,7 @@ async def on_drone_sell_do(callback: CallbackQuery):
         reward_text = f"{reward['metal']:,} ⚙️, {reward['crystals']:,} 💎, {reward['dark_matter']:,} 🕳️"
         await callback.answer(f"✅ Продано: {sold}. Получено: {reward_text}", show_alert=True)
         # Возвращаемся к карточке
+        callback.data = f"drone_card_{drone_type}_{level}"
         await on_drone_card(callback)
     else:
         await callback.answer(f"❌ {result['error']}", show_alert=True)
@@ -584,10 +666,11 @@ async def on_drone_upgrade_menu(callback: CallbackQuery):
     level = int(parts[4])
     
     user_id = callback.from_user.id
-    drones_data = await db.get_user_drones(user_id)
+    status = await db.get_drone_status(user_id)
     
+    in_angar = status.get('in_angar', {})
     config = DRONE_CONFIG.get(drone_type)
-    available = drones_data.get(f"{drone_type}_lvl{level}", 0)
+    available = in_angar.get(f"{drone_type}_lvl{level}", 0)
     
     # Доходы
     current_income = DroneSystem.get_income(drone_type, level)
@@ -599,7 +682,9 @@ async def on_drone_upgrade_menu(callback: CallbackQuery):
     text = (
         f"⭐️ <b>Улучшение дрона:</b>\n"
         f"{emoji} {config['name']}\n"
-        f"▸ Имеется: {available}\n"
+        f"▸ В ангаре: {available} (свободны для улучшения)\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
+        f"Правило: 5 дронов текущего уровня → 1 дрон следующего\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"После улучшения:\n"
         f"{next_emoji} Уровень: {level + 1}\n"
@@ -623,22 +708,23 @@ async def on_drone_upgrade_menu(callback: CallbackQuery):
     
     max_upgrades = available // 5
     
-    keyboard = [
-        [
-            InlineKeyboardButton(text="⭐️ Улучшить", callback_data=f"drone_upgrade_do_{drone_type}_{level}_1")
-        ]
-    ]
+    keyboard = []
     
-    if max_upgrades >= 5:
+    if max_upgrades > 0:
         keyboard.append([
-            InlineKeyboardButton(text="x5", callback_data=f"drone_upgrade_do_{drone_type}_{level}_5"),
-            InlineKeyboardButton(text="x10", callback_data=f"drone_upgrade_do_{drone_type}_{level}_10"),
-            InlineKeyboardButton(text="Все", callback_data=f"drone_upgrade_do_{drone_type}_{level}_all")
+            InlineKeyboardButton(text="⭐️ Улучшить", callback_data=f"drone_upgrade_do_{drone_type}_{level}_1")
         ])
-    elif max_upgrades >= 1:
-        keyboard.append([
-            InlineKeyboardButton(text="Все", callback_data=f"drone_upgrade_do_{drone_type}_{level}_all")
-        ])
+        
+        upgrade_buttons = []
+        if max_upgrades >= 5:
+            upgrade_buttons.append(InlineKeyboardButton(text="х5", callback_data=f"drone_upgrade_do_{drone_type}_{level}_5"))
+        if max_upgrades >= 10:
+            upgrade_buttons.append(InlineKeyboardButton(text="х10", callback_data=f"drone_upgrade_do_{drone_type}_{level}_10"))
+        upgrade_buttons.append(InlineKeyboardButton(text="Все", callback_data=f"drone_upgrade_do_{drone_type}_{level}_all"))
+        
+        keyboard.append(upgrade_buttons)
+    else:
+        text += "\n\n❌ Недостаточно дронов для улучшения (нужно минимум 5)"
     
     keyboard.append([
         InlineKeyboardButton(text="◀️ Назад", callback_data=f"drone_card_{drone_type}_{level}")
@@ -663,8 +749,9 @@ async def on_drone_upgrade_do(callback: CallbackQuery):
     user_id = callback.from_user.id
     
     if count_str == 'all':
-        drones_data = await db.get_user_drones(user_id)
-        available = drones_data.get(f"{drone_type}_lvl{level}", 0)
+        status = await db.get_drone_status(user_id)
+        in_angar = status.get('in_angar', {})
+        available = in_angar.get(f"{drone_type}_lvl{level}", 0)
         count = available // 5
     else:
         count = int(count_str)
@@ -675,6 +762,7 @@ async def on_drone_upgrade_do(callback: CallbackQuery):
         upgraded = result['count']
         await callback.answer(f"✅ Улучшено дронов: {upgraded}", show_alert=True)
         # Переходим к карточке следующего уровня
+        callback.data = f"drone_card_{drone_type}_{level + 1}"
         await on_drone_card(callback)
     else:
         await callback.answer(f"❌ {result['error']}", show_alert=True)
@@ -721,8 +809,13 @@ async def on_drone_collect(callback: CallbackQuery):
     
     if result['success']:
         collected = result['collected']
+        drones_returned = result.get('drones_returned', False)
+        
         if result.get('was_cleared'):
             await callback.answer("❌ Ресурсы сгорели (прошло более 24 часов)", show_alert=True)
+        elif drones_returned:
+            text = f"✅ Собрано:\n⚙️ {collected['metal']:,}\n💎 {collected['crystals']:,}\n🕳️ {collected['dark_matter']:,}\n\n🚁 Дроны вернулись в ангар"
+            await callback.answer(text, show_alert=True)
         else:
             text = f"✅ Собрано:\n⚙️ {collected['metal']:,}\n💎 {collected['crystals']:,}\n🕳️ {collected['dark_matter']:,}"
             await callback.answer(text, show_alert=True)
