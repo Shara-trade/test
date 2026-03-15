@@ -13,7 +13,7 @@ from database.migrations import MigrationManager
 from database.pool import init_pool, close_pool
 from handlers import start, mine, drones, profile, top, help
 from handlers import inventory, market, craft, clan, galaxy, modules
-from admin import router as admin_router
+from handlers.admin_panel import router as admin_router
 
 # Core модули (8. Технические требования)
 from core import cache, worker
