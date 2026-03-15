@@ -1,7 +1,3 @@
-"""
-Точка входа для бота Asteroid Miner
-"""
-import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -15,9 +11,13 @@ from handlers import start, mine, drones, profile, top, help
 from handlers import inventory, market, craft, clan, galaxy, modules
 from handlers.admin_panel import router as admin_router
 
-# Core модули (8. Технические требования)
+# Core модули (8. Технические требования)   
 from core import cache, worker
 from core.security import CallbackSecurityMiddleware, OwnershipMiddleware
+
+# Admin middleware (пункт 2 ТЗ)
+from admin import get_rate_limit_middleware, get_audit_middleware
+from config import DATABASE_PATH
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -61,6 +61,13 @@ async def main():
     dp.callback_query.middleware(CallbackSecurityMiddleware())
     dp.callback_query.middleware(OwnershipMiddleware())
     logger.info('✅ Security middleware подключены')
+    
+    # Подключение admin middleware (пункт 2 ТЗ)
+    rate_limit_mw = get_rate_limit_middleware()
+    audit_mw = get_audit_middleware(DATABASE_PATH)
+    dp.callback_query.middleware(rate_limit_mw)
+    dp.callback_query.middleware(audit_mw)
+    logger.info('✅ Admin middleware подключены (Rate Limit + Audit)')
     
     # Регистрация роутеров
     dp.include_router(start.router)
