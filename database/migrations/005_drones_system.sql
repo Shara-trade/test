@@ -12,8 +12,48 @@ ALTER TABLE users ADD COLUMN storage_dark INTEGER DEFAULT 0;
 ALTER TABLE users ADD COLUMN storage_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
 ALTER TABLE users ADD COLUMN has_premium INTEGER DEFAULT 0;
 
--- 2. Создаём таблицу для хранения количества дронов по типам и уровням
+-- 2. Создаём таблицу для хранения количества дронов в ангаре (свободных)
 CREATE TABLE IF NOT EXISTS user_drones (
+    user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    
+    -- Базовый дрон
+    base_lvl1 INTEGER DEFAULT 0,
+    base_lvl2 INTEGER DEFAULT 0,
+    base_lvl3 INTEGER DEFAULT 0,
+    base_lvl4 INTEGER DEFAULT 0,
+    base_lvl5 INTEGER DEFAULT 0,
+    
+    -- Шахтёр
+    miner_lvl1 INTEGER DEFAULT 0,
+    miner_lvl2 INTEGER DEFAULT 0,
+    miner_lvl3 INTEGER DEFAULT 0,
+    miner_lvl4 INTEGER DEFAULT 0,
+    miner_lvl5 INTEGER DEFAULT 0,
+    
+    -- Лазерный
+    laser_lvl1 INTEGER DEFAULT 0,
+    laser_lvl2 INTEGER DEFAULT 0,
+    laser_lvl3 INTEGER DEFAULT 0,
+    laser_lvl4 INTEGER DEFAULT 0,
+    laser_lvl5 INTEGER DEFAULT 0,
+    
+    -- Квантовый
+    quantum_lvl1 INTEGER DEFAULT 0,
+    quantum_lvl2 INTEGER DEFAULT 0,
+    quantum_lvl3 INTEGER DEFAULT 0,
+    quantum_lvl4 INTEGER DEFAULT 0,
+    quantum_lvl5 INTEGER DEFAULT 0,
+    
+    -- ИИ-дрон
+    ai_lvl1 INTEGER DEFAULT 0,
+    ai_lvl2 INTEGER DEFAULT 0,
+    ai_lvl3 INTEGER DEFAULT 0,
+    ai_lvl4 INTEGER DEFAULT 0,
+    ai_lvl5 INTEGER DEFAULT 0
+);
+
+-- 3. Создаём таблицу для хранения нанятых дронов (работающих)
+CREATE TABLE IF NOT EXISTS hired_drones (
     user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
     
     -- Базовый дрон
