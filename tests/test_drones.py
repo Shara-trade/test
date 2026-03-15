@@ -129,28 +129,63 @@ class TestDroneSystemIncome:
 
 
 class TestDroneSystemPrices:
-    """Тесты цен"""
+    """Тесты цен дронов"""
     
-    def test_get_price_basic(self):
-        """Тест цены базового дрона"""
+    @pytest.mark.asyncio
+    async def test_get_price_basic(self):
+        """Тест получения цены базового дрона"""
         price = DroneSystem.get_price('basic')
-        
         assert price['metal'] == 7500
         assert price['crystals'] == 0
         assert price['dark_matter'] == 0
     
-    def test_get_price_ai(self):
-        """Тест цены ИИ-дрона"""
+    @pytest.mark.asyncio
+    async def test_get_price_miner(self):
+        """Тест получения цены шахтёра"""
+        price = DroneSystem.get_price('miner')
+        assert price['metal'] == 10000
+        assert price['crystals'] == 7500
+        assert price['dark_matter'] == 0
+    
+    @pytest.mark.asyncio
+    async def test_get_price_ai(self):
+        """Тест получения цены ИИ-дрона"""
         price = DroneSystem.get_price('ai')
-        
         assert price['metal'] == 20000
         assert price['crystals'] == 20000
         assert price['dark_matter'] == 20000
     
+    @pytest.mark.asyncio
+    async def test_get_sell_price_level_1(self):
+        """Тест цены продажи дрона 1 уровня (30%)"""
+        price = DroneSystem.get_sell_price('basic', 1)
+        # 7500 * 0.3 = 2250
+        assert price['metal'] == 2250
+        assert price['crystals'] == 0
+        assert price['dark_matter'] == 0
+    
+    @pytest.mark.asyncio
+    async def test_get_sell_price_level_2(self):
+        """Тест цены продажи дрона 2 уровня (30% от 5 * цена 1 уровня)"""
+        price = DroneSystem.get_sell_price('basic', 2)
+        # 7500 * 5 * 0.3 = 11250
+        assert price['metal'] == 11250
+        assert price['crystals'] == 0
+        assert price['dark_matter'] == 0
+    
+    @pytest.mark.asyncio
+    async def test_get_sell_price_level_5(self):
+        """Тест цены продажи дрона 5 уровня (30% от 625 * цена 1 уровня)"""
+        price = DroneSystem.get_sell_price('basic', 5)
+        # 7500 * 625 * 0.3 = 1406250
+        assert price['metal'] == 1406250
+        assert price['crystals'] == 0
+        assert price['dark_matter'] == 0
+
     def test_get_sell_price_level_1(self):
         """Тест цены продажи дрона 1 уровня"""
         price = DroneSystem.get_sell_price('basic', 1)
-        
+
         # 30% от 7500 = 2250
         assert price['metal'] == 2250
     
@@ -375,16 +410,96 @@ class TestDroneSystemFormatting:
 
 
 class TestDroneConstants:
-    """Тесты констант"""
+    """Тесты констант системы дронов"""
     
-    def test_max_drone_level(self):
+    @pytest.mark.asyncio
+    async def test_max_drone_level(self):
         """Тест максимального уровня"""
+        from game.drones import MAX_DRONE_LEVEL
         assert MAX_DRONE_LEVEL == 5
     
-    def test_max_hired_drones(self):
-        """Тест максимального количества в найме"""
+    @pytest.mark.asyncio
+    async def test_max_hired_drones(self):
+        """Тест лимита найма"""
+        from game.drones import MAX_HIRED_DRONES
         assert MAX_HIRED_DRONES == 50
     
-    def test_mission_duration(self):
+    @pytest.mark.asyncio
+    async def test_mission_duration(self):
         """Тест длительности миссии"""
+        from game.drones import MISSION_DURATION_MINUTES
         assert MISSION_DURATION_MINUTES == 120
+
+
+class TestDroneMission:
+    """Тесты миссий дронов"""
+    
+    @pytest.mark.asyncio
+    async def test_mission_duration_2_hours(self):
+        """Тест длительности миссии 2 часа"""
+        from game.drones import MISSION_DURATION_MINUTES
+        assert MISSION_DURATION_MINUTES == 120
+    
+    @pytest.mark.asyncio
+    async def test_storage_expire_24_hours(self):
+        """Тест времени сгорания ресурсов 24 часа"""
+        from game.drones import STORAGE_EXPIRE_MINUTES
+        assert STORAGE_EXPIRE_MINUTES == 1440
+    
+    @pytest.mark.asyncio
+    async def test_income_accumulation(self):
+        """Тест накопления дохода"""
+        from datetime import datetime, timedelta
+        from game.drones import DroneSystem
+        
+        # 10 базовых дронов 1 уровня в найме
+        drones_data = {'basic_lvl1': 10}
+        hired_count = 10
+        last_update = datetime.now() - timedelta(minutes=60)
+        
+        result = DroneSystem.calculate_storage_income(drones_data, hired_count, last_update)
+        
+        # 10 дронов × 30 металла/мин × 60 минут = 18000
+        assert result['metal'] == 18000
+        assert result['minutes_passed'] == 60
+    
+    @pytest.mark.asyncio
+    async def test_income_accumulation_mission_ended(self):
+        """Тест накопления дохода после окончания миссии"""
+        from datetime import datetime, timedelta
+        from game.drones import DroneSystem
+        
+        # Миссия закончилась 30 минут назад
+        hired_until = datetime.now() - timedelta(minutes=30)
+        now = datetime.now()
+        
+        status = DroneSystem.check_mission_status(hired_until, now)
+        
+        assert status['is_expired'] is True
+        assert status['expired_hours_ago'] > 0
+    
+    @pytest.mark.asyncio
+    async def test_resources_clear_after_24h(self):
+        """Тест сгорания ресурсов через 24 часа"""
+        from datetime import datetime, timedelta
+        from game.drones import DroneSystem
+        
+        # Миссия закончилась 25 часов назад
+        hired_until = datetime.now() - timedelta(hours=25)
+        
+        should_clear = DroneSystem.should_clear_storage(hired_until)
+        
+        assert should_clear is True
+    
+    @pytest.mark.asyncio
+    async def test_resources_not_clear_under_24h(self):
+        """Тест что ресурсы не сгорают раньше 24 часов"""
+        from datetime import datetime, timedelta
+        from game.drones import DroneSystem
+        
+        # Миссия закончилась 10 часов назад
+        hired_until = datetime.now() - timedelta(hours=10)
+        
+        should_clear = DroneSystem.should_clear_storage(hired_until)
+        
+        assert should_clear is False
