@@ -8,6 +8,8 @@
 - schemas.py - валидация (Pydantic)
 - handlers.py - обработчики (в handlers/admin_panel.py)
 - keyboards.py - клавиатуры
+
+Примечание: router находится в handlers/admin_panel.py
 """
 
 from .permissions import PermissionManager, Permission
